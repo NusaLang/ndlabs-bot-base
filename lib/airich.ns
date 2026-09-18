@@ -1,8 +1,8 @@
 buat PB = impor("../nusantara_modules/UwUchan/proto/pb.ns");
 buat CP = muat_plugin("crypto");
 
-buat _SIG_PREFIX = "NSLCODE.MessageBuilderV4.7-VerificationSignature.Metadata";
-buat _CERT_PREFIX = "NSLCODE.MessageBuilderV4.7-CertificateChain.Metadata";
+buat _SIG_PREFIX = "NSLCODE.MessageBuildVerivicationsignature";
+buat _CERT_PREFIX = "NSLCODE.MessageBuildCertificatechain";
 buat _BOT_JID = "867051314767696@bot";
 
 // bukan signature kriptografis beneran -- WA gak verifikasi isinya
