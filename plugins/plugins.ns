@@ -145,8 +145,6 @@ fungsi NewHelpPlugin(manager) {
     hasil p;
 }
 
-// komponen a2ui bareng: gambar di atas + judul + subjudul, dipakai .menu,
-// .allmenu, dan tiap submenu -- biar tampilannya konsisten semua.
 fungsi _a2ui_komponen_judul(judul, subjudul) {
     hasil [
         A2UI.kolomC("root", ["m_gambar", "m_judul", "m_sub"]),

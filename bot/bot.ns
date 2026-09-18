@@ -233,20 +233,7 @@ fungsi New(config) {
         }
 
         jika UTILS.IsDibisukan(chat_ini) {
-            // Lewat goroutine, dan wc0 (snapshot b["WA"] pas ini masih
-            // valid) dioper eksplisit -- _arsipMedia/_mintaHistoriSekali
-            // bisa download media (UnduhMedia) atau (lewat
-            // _refreshAnggotaBisu di _arsipStatus) fetch peserta grup yang,
-            // kalau cache 600s-nya expired, nunggu tunggu_iq.
-            // _cekArsipDanBisu dipanggil SYNCHRONOUS dari proses_node (loop
-            // utama, satu-satunya pemanggil ws_terima) -- kalau tunggu_iq
-            // kepanggil dari sini, loop utama nunggu dirinya sendiri =
-            // deadlock permanen (bukan cuma lambat), gak ada auto-recovery.
-            // Ini kejadian beneran (bot freeze total abis pesan status
-            // masuk). wc0 dioper langsung (bukan baca b["WA"] belakangan
-            // dari goroutine) biar gak salah arsip pesan lain yang keburu
-            // numpuk di b["WA"] -- sama kelasnya kayak fix react/reply
-            // nyasar di HandleMessage.
+            // lewat goroutine wajib -- kalau sync bisa deadlock loop utama pas tunggu_iq
             jalan(b["_arsipMedia"], wc0);
             jalan(b["_mintaHistoriSekali"], wc0, sender, from_me);
             hasil benar;
@@ -260,10 +247,7 @@ fungsi New(config) {
     };
 
     b["HandleMessage"] = fungsi(sender, text_content, from_me, wa_snapshot) {
-        // wa_snapshot dipake kalau ada (dititip worker pool, biar gak baca
-        // b["WA"] yang bisa udah ketimpa pesan lain pas lagi rame -- itu
-        // penyebab react/reply nyasar ke chat/pesan yang salah). Fallback
-        // ke b["WA"] buat pemanggil lama yang belum ngirim snapshot.
+        // snapshot biar react/reply gak nyasar kalau b["WA"] ketimpa pesan lain
         buat wc0 = wa_snapshot;
         jika tipe(wc0) == "kosong" { wc0 = b["WA"]; }
         buat chat_ini = "";

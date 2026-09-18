@@ -1,7 +1,3 @@
-// Helper buat kirim pesan "Bloks Widget" (im_a2ui) -- UI native declaratif
-// ala Meta (Column/Text/Image/Card dst, lihat https://a2ui.org/), BUKAN
-// trik HTML-embed kayak lib/airich.ns. Dirender langsung sama klien WA,
-// jadi gak kena batasan sandbox WebView (fetch/gambar diblokir dll).
 buat MS = impor("../nusantara_modules/UwUchan/msgsend.ns");
 buat CP = muat_plugin("crypto");
 
@@ -13,8 +9,6 @@ fungsi _uuid_acak() {
     buat hx = CP["acak_bytes_hex"](16);
     hasil potong(hx, 0, 8) + "-" + potong(hx, 8, 12) + "-" + potong(hx, 12, 16) + "-" + potong(hx, 16, 20) + "-" + potong(hx, 20, 32);
 }
-
-// ---- Komponen (tiap fungsi balikin satu peta {id, component, ...}) ----
 
 fungsi teksC(id, isi, varian) {
     buat c = peta_baru();
@@ -59,8 +53,6 @@ fungsi kartuC(id, anak_id) {
     hasil c;
 }
 
-// ---- Tombol native_flow (dipasang di nativeFlowMessage.buttons) ----
-
 fungsi tombolUrl(label, url) {
     buat b = peta_baru();
     b["name"] = "cta_url";
@@ -92,8 +84,7 @@ fungsi tombolList(label_tombol, sections) {
     hasil b;
 }
 
-// kirim(wa, komponen_list, opsi)
-// opsi: {footer, tombol: [tombolUrl(...)/tombolBalasanCepat(...)/...], expiration}
+// opsi: {footer, tombol, expiration}
 fungsi kirim(wa, komponen_list, opsi) {
     jika tipe(wa) == "kosong" { lempar "wa API belum siap"; }
     jika tipe(opsi) != "peta" { opsi = peta_baru(); }

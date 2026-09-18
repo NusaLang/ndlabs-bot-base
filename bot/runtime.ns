@@ -112,26 +112,12 @@ fungsi _sambungkan_sekali(waBot, DB, ARSIP, UTILS, target_num, target_num_clean,
 
     buat k = peta_baru();
     k["ws_id"] = ws_id;
-    // Lock kirim beneran (kanal, nunggu -- bukan flag boolean yang nolak
-    // diem-diem) -- semua fungsi kirim_* (grup/1:1/peer) pake lock yang
-    // sama karena counter noise-socket (wc) harus strict sequential
-    // regardless jenis kirimannya. Dibikin di sini (bukan lazy-init) biar
-    // gak ada race pas goroutine per-pesan mulai jalan bersamaan.
+    // lock kirim strict sequential -- counter noise-socket gak boleh race
     k["kirim_lock"] = kanal_baru(1);
     kanal_kirim(k["kirim_lock"], 1);
-    // Peta req_id -> kanal, buat multiplexer IQ (lihat KL.tunggu_iq_kanal).
-    // Cuma loop koneksi di bawah (satu-satunya pemanggil ws_terima) yang
-    // boleh baca socket -- siapapun (termasuk goroutine) yang nunggu
-    // respons IQ tertentu daftar di sini dan nunggu lewat kanal, bukan
-    // baca socket sendiri (ws.cpp punya rbuf yang gak dilock buat baca,
-    // dua pembaca bareng = race condition beneran di level native).
+    // req_id -> kanal, cuma loop koneksi di bawah yang boleh baca ws_terima langsung
     k["iq_waiters"] = peta_baru();
-    // CATATAN: sempet dicoba worker-pool tetap (N goroutine nunggu di
-    // kanal), tapi bikin proses segfault berulang (dikonfirmasi lewat
-    // journalctl/dmesg -- pola stack overflow) begitu goroutine-nya idle
-    // nunggu kanal_terima bareng-bareng. Balik ke goroutine-per-pesan
-    // (jalan(...) langsung tiap pesan masuk, lihat client.ns) yang udah
-    // kebukti stabil.
+    // goroutine-per-pesan, bukan worker-pool tetap -- worker-pool bikin segfault
     k["noise_socket"] = noise_socket;
     k["parser"] = parser;
     k["session_data"] = session_data;
@@ -198,12 +184,7 @@ fungsi _sambungkan_sekali(waBot, DB, ARSIP, UTILS, target_num, target_num_clean,
             coba {
                 buat pending_kirim = DB.AntrianKirimPending(5);
                 untuk (buat pki = 0; pki < panjang(pending_kirim); pki = pki + 1) {
-                    // Diproses di goroutine sendiri -- kalau kirimnya butuh
-                    // tunggu_iq (grup baru/cache device kosong, dst), itu
-                    // BLOCKING nunggu kanal yang cuma bisa diisi loop utama
-                    // ini sendiri lewat ws_terima. Kalau dipanggil langsung
-                    // di sini (bukan goroutine), loop utama nunggu dirinya
-                    // sendiri -- deadlock sampe timeout tunggu_iq baru lepas.
+                    // goroutine wajib -- sync di sini bisa deadlock nunggu tunggu_iq
                     jalan(_proses_item_antrian_kirim, k, DB, pending_kirim[pki]);
                 }
             } tangkap (epoll) {}
@@ -237,9 +218,7 @@ fungsi _sambungkan_sekali(waBot, DB, ARSIP, UTILS, target_num, target_num_clean,
             untuk (buat i = 0; i < panjang(frames_enc); i = i + 1) {
                 buat dec_raw = NS.TerimaFrame(noise_socket, frames_enc[i]);
                 buat node = D.BcUnmarshal(EN.BcUnpack(dec_raw));
-                // Loop ini SATU-SATUNYA pembaca ws_terima -- kalau ini
-                // balesan IQ yang lagi ditunggu (goroutine/kode lain lewat
-                // KL.tunggu_iq), serahin ke kanalnya, jangan diproses dobel.
+                // satu-satunya pembaca ws_terima -- balesan IQ diserahin ke kanalnya
                 jika !KL.CobaSerahkanKePenunggu(k, node) {
                     KL.ProsesNode(k, node);
                     KL.ProsesAntrian(k);

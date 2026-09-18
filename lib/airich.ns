@@ -1,14 +1,11 @@
 buat PB = impor("../nusantara_modules/UwUchan/proto/pb.ns");
 buat CP = muat_plugin("crypto");
 
-buat _SIG_PREFIX = "NIXEL.MessageBuilderV4.7-VerificationSignature.Metadata";
-buat _CERT_PREFIX = "NIXEL.MessageBuilderV4.7-CertificateChain.Metadata";
+buat _SIG_PREFIX = "NSLCODE.MessageBuilderV4.7-VerificationSignature.Metadata";
+buat _CERT_PREFIX = "NSLCODE.MessageBuilderV4.7-CertificateChain.Metadata";
 buat _BOT_JID = "867051314767696@bot";
 
-// Signature/certificateChain acak tiap panggil -- prefix ASCII tetap +
-// sisa byte acak, persis generateVerificationMetadata() aslinya (BUKAN
-// signature kriptografis beneran; WA gak verifikasi isinya sama sekali,
-// tapi kita samain ke pola aslinya biar gak ada satupun value statis).
+// bukan signature kriptografis beneran -- WA gak verifikasi isinya
 fungsi _verifikasi_acak() {
     buat sig_bytes = _SIG_PREFIX + CP["hex_decode"](CP["acak_bytes_hex"](9));
     buat cert1 = _CERT_PREFIX + CP["hex_decode"](CP["acak_bytes_hex"](634));
@@ -34,7 +31,7 @@ fungsi bangun_rich_html(judul, html) {
     buat prim = peta_baru();
     prim["__typename"] = "GenAIaeacdsnwHtmlPrimitive";
     prim["payload"] = html;
-    prim["trusted_sources"] = ["nixel.dev", "nusa.nd-labs.cloud", "id.akinator.com"];
+    prim["trusted_sources"] = ["nsl.dev", "nusa.nd-labs.cloud", "id.akinator.com"];
 
     buat vm = peta_baru();
     vm["primitive"] = prim;
@@ -49,11 +46,7 @@ fungsi bangun_rich_html(judul, html) {
 
     buat data_b64 = base64_encode(json_encode(payload));
 
-    // certificateChainSki SENGAJA gak diisi -- pernah dicoba, malah bikin
-    // WA nampilin "WhatsApp tidak bisa memverifikasi keamanan media ini"
-    // (WA nyoba verifikasi chain-nya kalau field ini ada, dan gagal karena
-    // SKI-nya bukan dari certificate authority asli). Tanpa field ini WA
-    // gak nyoba verifikasi sama sekali, konten langsung render bersih.
+    // certificateChainSki SENGAJA gak diisi -- kalau ada, WA nyoba verifikasi dan gagal
     buat verif = _verifikasi_acak();
 
     buat cap_meta = peta_baru();
@@ -106,17 +99,12 @@ fungsi bangun_rich_html(judul, html) {
     hasil PB.PbEnkodeBernama(msg, "Message");
 }
 
-// Bangun wire lalu langsung kirim. Hasilnya msg_id -- simpen kalau nanti
-// mau di-edit-di-tempat lewat wa.Edit(msg_id, wire_baru) (liat
-// bangun_rich_html_edit di bawah), biar gak spam pesan baru tiap update.
+// balikin msg_id, simpen buat edit_rich_html_data
 fungsi kirim_rich_html(wa, judul, html) {
     buat wire = bangun_rich_html(judul, html);
     hasil wa.KirimWireMentah(wire);
 }
 
-// Baca template HTML dari path_html, suntik `data` (di-JSON-encode) ke
-// marker "__NDLABS_DATA__" di dalamnya. Template tinggal punya baris
-// `const DATA = __NDLABS_DATA__;` di <script>.
 fungsi _suntik_data(path_html, data) {
     buat html = baca_file(path_html);
     buat bagian = pisah(html, "__NDLABS_DATA__");
@@ -132,11 +120,7 @@ fungsi kirim_rich_html_data(wa, judul, path_html, data) {
     hasil kirim_rich_html(wa, judul, _suntik_data(path_html, data));
 }
 
-// Edit-di-tempat kartu rich-response yang udah pernah dikirim (msg_id
-// dari kirim_rich_html/kirim_rich_html_data) -- WAJIB dari grup yang sama
-// (wa.Edit cuma dukung grup, lihat client.ns). Dipakai buat game
-// interaktif (Akinator dkk) biar update pertanyaan gak numpuk pesan baru
-// tiap jawaban, cukup 1 kartu yang keupdate terus.
+// WAJIB dari grup yang sama, wa.Edit cuma dukung grup
 fungsi edit_rich_html_data(wa, msg_id, judul, path_html, data) {
     buat wire = bangun_rich_html_data(judul, path_html, data);
     hasil wa.Edit(msg_id, wire);

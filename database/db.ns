@@ -134,11 +134,7 @@ fungsi AmbilFlag(kunci) {
     hasil "";
 }
 
-// Antrian permintaan kirim pesan dari sandbox eval (`>`) ke proses bot
-// utama -- eval jalan di subprocess `nusa -e` terpisah (gak nyambung ke
-// koneksi WA live, demi safety), jadi nopal.sendMessage() di dalam eval
-// nulis permintaan ke sini lewat SQLite bersama, terus proses bot utama
-// (loop koneksi) yang beneran eksekusi kirimnya dan nulis balik hasilnya.
+// antrian kirim dari sandbox eval (subprocess) ke proses bot utama lewat SQLite
 fungsi AntrianKirimBaru(id, chat, message_json, opsi_json) {
     jika handle_db == 0 { hasil salah; }
     coba { SQL["db_jalankan"](handle_db, "DELETE FROM eval_send_queue WHERE ts < ?;", json_encode([waktu() - 120])); } tangkap (e) {}
@@ -170,8 +166,7 @@ fungsi AntrianKirimCek(id) {
     hasil kosong;
 }
 
-// State game per-chat, expire otomatis (lazy check -- dihapus begitu
-// dibaca/ditulis abis lewat expires_at, gak butuh cron/timer terpisah).
+// expire lazy lewat expires_at, gak butuh cron
 fungsi GameStateSet(chat, game, data_json, ttl_detik) {
     jika handle_db == 0 { hasil salah; }
     buat expires_at = waktu() + ttl_detik;
@@ -201,9 +196,7 @@ fungsi GameStateHapus(chat, game) {
     hasil res["ok"] == benar;
 }
 
-// Leaderboard per-chat/game/round -- round_id dipakai buat "reset otomatis"
-// (round baru = leaderboard baru), round lama dibersihkan lazy pas round
-// baru dimulai.
+// round_id baru = leaderboard baru, round lama dibersihkan lazy
 fungsi GameScoreTambah(chat, game, round_id, user, delta) {
     jika handle_db == 0 { hasil salah; }
     buat res = json_decode(SQL["db_jalankan"](handle_db,

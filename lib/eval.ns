@@ -242,13 +242,7 @@ fungsi bungkus_cetak(kode) {
     hasil potong(asli, 0, m0) + "\ncetak(RAPI(" + terakhir + "));";
 }
 
-// `>` eval jalan di subprocess `nusa -e` terpisah (gak nyambung ke koneksi
-// WA live -- demi safety, biar eval yang jelek/nyangkut gak nge-crash bot
-// utama). Biar nopal.sendMessage(...) di dalam eval beneran bisa ngirim,
-// permintaannya ditulis ke tabel `eval_send_queue` (SQLite yang sama-sama
-// dipakai proses bot utama), lalu di-poll sampai proses bot utama (loop
-// koneksi di bot/runtime.ns) beneran eksekusi kirimnya dan nulis balik
-// hasilnya -- lihat db.ns (AntrianKirim*) dan runtime.ns (poll tiap 1 detik).
+// eval jalan di subprocess terpisah -- nopal.sendMessage nulis ke eval_send_queue, dipoll bot utama
 buat _NOPAL_PRELUDE =
     "buat _SQL = muat_plugin(\"sqlite\");\n" +
     "buat _CPQ = muat_plugin(\"crypto\");\n" +
@@ -277,11 +271,7 @@ buat _NOPAL_PRELUDE =
     "}\n" +
     "buat nopal = Nopal();\n";
 
-// `m` dibungkus jadi `bentuk` (struct asli) biar bisa diakses pake titik
-// (m.chat, m.key.remoteJid, dst) kayak objek beneran, bukan `m["chat"]`.
-// Field yang bentuknya bebas/gak tetap (quoted/media/message/msg/mention)
-// TETEP peta biasa (bracket) -- struct field-nya harus fix, sedangkan
-// message proto bisa 234 macam bentuk.
+// field bebas/gak tetap (quoted/media/message/msg/mention) tetep peta biasa
 buat _M_BENTUK =
     "bentuk M { sender, rawSender, text, fromMe, chat, isGroup, id, device, body, type, mention, quoted, quotedObj, media, message, msg, isMedia, isViewOnce, mediaPath, key, pushName, senderJid, isImage, isVideo, isAudio, isDocument, isSticker }\n" +
     "bentuk MKunci { remoteJid, fromMe, id, participant }\n";
