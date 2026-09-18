@@ -1,0 +1,251 @@
+buat RETRY_PB = impor("proto/pb.ns");
+
+buat RETRY_UKURAN_CACHE = 256;
+buat RETRY_MAKS_MASUK = 10;
+buat RETRY_MAKS_RECEIPT = 5;
+buat RETRY_TIMEOUT_BIKIN_SESI = 3600;
+buat RETRY_MAKS_ENTRI_HISTORI = 512;
+buat RETRY_JEDA_MINTA_HP = 5;
+
+fungsi _retry_node(tag, attrs, children, content) {
+    buat n = peta_baru();
+    n["tag"] = tag;
+    jika tipe(attrs) == "peta" { n["attrs"] = attrs; } lain { n["attrs"] = peta_baru(); }
+    jika tipe(children) == "larik" { n["children"] = children; } lain { n["children"] = []; }
+    jika tipe(content) == "teks" { n["content"] = content; n["ada_isi"] = benar; }
+    lain jika panjang(n["children"]) > 0 { n["content"] = kosong; n["ada_isi"] = benar; }
+    lain { n["content"] = kosong; n["ada_isi"] = salah; }
+    hasil n;
+}
+
+fungsi _retry_anak(node, tag) {
+    jika tipe(node["children"]) != "larik" { hasil kosong; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        jika node["children"][i]["tag"] == tag { hasil node["children"][i]; }
+    }
+    hasil kosong;
+}
+
+fungsi retry_jid_teks(j) {
+    jika tipe(j) != "peta" { hasil ke_teks(j); }
+    jika tipe(j["device"]) == "angka" && j["device"] > 0 {
+        hasil j["user"] + "." + ke_teks(j["device"]) + "@" + j["server"];
+    }
+    hasil j["user"] + "@" + j["server"];
+}
+
+fungsi retry_kunci_pesan(tujuan, msg_id) {
+    hasil ke_teks(tujuan) + "|" + ke_teks(msg_id);
+}
+
+fungsi retry_cache_baru() {
+    buat c = peta_baru();
+    c["peta"] = peta_baru();
+    c["urutan"] = [];
+    c["ptr"] = 0;
+    hasil c;
+}
+
+fungsi retry_tambah_pesan(cache, tujuan, msg_id, wire, format) {
+    jika tipe(cache) != "peta" { lempar "cache retry belum diinisialisasi"; }
+    buat k = retry_kunci_pesan(tujuan, msg_id);
+    buat entri = peta_baru();
+    entri["format"] = format;
+    jika tipe(format) != "teks" || panjang(format) == 0 { entri["format"] = "wa"; }
+    entri["wire"] = wire;
+    entri["waktu"] = waktu();
+
+    jika tipe(cache["peta"][k]) == "peta" {
+        cache["peta"][k] = entri;
+        hasil k;
+    }
+    jika panjang(cache["urutan"]) < RETRY_UKURAN_CACHE {
+        tambah(cache["urutan"], k);
+    } lain {
+        buat lama = cache["urutan"][cache["ptr"]];
+        cache["peta"][lama] = kosong;
+        cache["urutan"][cache["ptr"]] = k;
+        cache["ptr"] = (cache["ptr"] + 1) % RETRY_UKURAN_CACHE;
+    }
+    cache["peta"][k] = entri;
+    hasil k;
+}
+
+fungsi retry_ambil_pesan(cache, tujuan, msg_id) {
+    jika tipe(cache) != "peta" { hasil kosong; }
+    buat e = cache["peta"][retry_kunci_pesan(tujuan, msg_id)];
+    jika tipe(e) != "peta" { hasil kosong; }
+    hasil e;
+}
+
+fungsi retry_ambil_pesan_alt(cache, tujuan, tujuan_alt, msg_id) {
+    buat e = retry_ambil_pesan(cache, tujuan, msg_id);
+    jika tipe(e) == "peta" { hasil e; }
+    jika tipe(tujuan_alt) != "teks" || panjang(tujuan_alt) == 0 { hasil kosong; }
+    hasil retry_ambil_pesan(cache, tujuan_alt, msg_id);
+}
+
+fungsi retry_state_baru() {
+    buat s = peta_baru();
+    s["hitung_masuk"] = peta_baru();
+    s["hitung_receipt"] = peta_baru();
+    s["histori_sesi"] = peta_baru();
+    s["minta_hp_tertunda"] = peta_baru();
+    hasil s;
+}
+
+fungsi _retry_pangkas(peta_target, maks) {
+    buat ks = peta_kunci(peta_target);
+    jika panjang(ks) < maks { hasil kosong; }
+    untuk (buat i = 0; i < panjang(ks); i = i + 1) { peta_target[ks[i]] = kosong; }
+}
+
+fungsi retry_urai_receipt(node) {
+    buat rc = _retry_anak(node, "retry");
+    jika tipe(rc) != "peta" { lempar "retry receipt tanpa <retry>"; }
+    buat a = rc["attrs"];
+    buat r = peta_baru();
+    jika tipe(a["id"]) != "teks" || panjang(a["id"]) == 0 { lempar "retry receipt tanpa id"; }
+    r["msg_id"] = a["id"];
+    r["waktu"] = 0;
+    jika tipe(a["t"]) == "teks" && panjang(a["t"]) > 0 { r["waktu"] = ke_angka(a["t"]); }
+    r["count"] = 0;
+    jika tipe(a["count"]) == "teks" && panjang(a["count"]) > 0 { r["count"] = ke_angka(a["count"]); }
+    r["ada_keys"] = (tipe(_retry_anak(node, "keys")) == "peta");
+    hasil r;
+}
+
+fungsi retry_hitung_masuk(state, pengirim, msg_id) {
+    buat k = retry_kunci_pesan(pengirim, msg_id);
+    _retry_pangkas(state["hitung_masuk"], RETRY_MAKS_ENTRI_HISTORI);
+    buat c = state["hitung_masuk"][k];
+    jika tipe(c) != "angka" { c = 0; }
+    c = c + 1;
+    state["hitung_masuk"][k] = c;
+
+    buat r = peta_baru();
+    r["count"] = c;
+    r["diterima"] = (c < RETRY_MAKS_MASUK);
+    hasil r;
+}
+
+fungsi retry_harus_bikin_sesi_ulang(state, retry_count, jid, ada_sesi) {
+    buat r = peta_baru();
+    r["ulang"] = salah;
+    r["alasan"] = "";
+    buat k = retry_jid_teks(jid);
+    buat sekarang = waktu();
+
+    jika ada_sesi != benar {
+        state["histori_sesi"][k] = sekarang;
+        r["ulang"] = benar;
+        r["alasan"] = "belum ada sesi Signal sama device ini";
+        hasil r;
+    }
+    jika retry_count < 2 { hasil r; }
+
+    buat prev = state["histori_sesi"][k];
+    jika tipe(prev) != "angka" || (prev + RETRY_TIMEOUT_BIKIN_SESI) < sekarang {
+        state["histori_sesi"][k] = sekarang;
+        r["ulang"] = benar;
+        r["alasan"] = "retry count > 1 dan udah lewat sejam sejak sesi terakhir dibikin";
+    }
+    hasil r;
+}
+
+fungsi retry_hitung_receipt(state, msg_id, count_di_pesan) {
+    _retry_pangkas(state["hitung_receipt"], RETRY_MAKS_ENTRI_HISTORI);
+    buat c = state["hitung_receipt"][msg_id];
+    jika tipe(c) != "angka" { c = 0; }
+    c = c + 1;
+    jika c == 1 && tipe(count_di_pesan) == "angka" && count_di_pesan > 0 { c = count_di_pesan + 1; }
+    state["hitung_receipt"][msg_id] = c;
+
+    buat r = peta_baru();
+    r["count"] = c;
+    r["kirim"] = (c < RETRY_MAKS_RECEIPT);
+    r["minta_dari_hp"] = (c == 1);
+    r["sisip_identity"] = (c > 1);
+    hasil r;
+}
+
+fungsi retry_count_di_node(node) {
+    jika tipe(node["children"]) != "larik" { hasil 0; }
+    jika panjang(node["children"]) != 1 { hasil 0; }
+    buat c = node["children"][0];
+    jika c["tag"] != "enc" { hasil 0; }
+    jika tipe(c["attrs"]["count"]) != "teks" { hasil 0; }
+    jika panjang(c["attrs"]["count"]) == 0 { hasil 0; }
+    hasil ke_angka(c["attrs"]["count"]);
+}
+
+fungsi retry_buat_node_kirim_ulang(msg_id, waktu_pesan, node_receipt, TipePesan, enc_node, grup, node_ekstra) {
+    jika tipe(enc_node) != "peta" { lempar "node <enc> buat retry gak ada"; }
+    buat na = node_receipt["attrs"];
+
+    buat attrs = peta_baru();
+    attrs["to"] = na["from"];
+    attrs["type"] = TipePesan;
+    jika tipe(TipePesan) != "teks" || panjang(TipePesan) == 0 { attrs["type"] = "text"; }
+    attrs["id"] = msg_id;
+    attrs["t"] = waktu_pesan;
+    jika grup != benar { attrs["device_fanout"] = "false"; }
+    jika tipe(na["participant"]) == "peta" { attrs["participant"] = na["participant"]; }
+    jika tipe(na["recipient"]) == "peta" { attrs["recipient"] = na["recipient"]; }
+    jika tipe(na["edit"]) == "teks" && panjang(na["edit"]) > 0 { attrs["edit"] = na["edit"]; }
+
+    buat isi = [enc_node];
+    jika tipe(node_ekstra) == "peta" { tambah(isi, node_ekstra); }
+    lain jika tipe(node_ekstra) == "larik" {
+        untuk (buat i = 0; i < panjang(node_ekstra); i = i + 1) { tambah(isi, node_ekstra[i]); }
+    }
+    hasil _retry_node("message", attrs, isi, kosong);
+}
+
+fungsi retry_buat_node_enc(wire, tipe_enc, retry_count, tipe_media) {
+    buat a = peta_baru();
+    a["v"] = "2";
+    a["type"] = tipe_enc;
+    a["count"] = retry_count;
+    jika tipe(tipe_media) == "teks" && panjang(tipe_media) > 0 { a["mediatype"] = tipe_media; }
+    hasil _retry_node("enc", a, [], wire);
+}
+
+fungsi retry_bangun_message_key(chat_jid_teks, pengirim_jid_teks, msg_id, dari_saya) {
+    buat f = RETRY_PB.PbBytes(1, chat_jid_teks);
+    jika dari_saya == benar { f = f + RETRY_PB.PbVarint(2, 1); } lain { f = f + RETRY_PB.PbVarint(2, 0); }
+    f = f + RETRY_PB.PbBytes(3, msg_id);
+    jika dari_saya != benar && tipe(pengirim_jid_teks) == "teks" && panjang(pengirim_jid_teks) > 0 {
+        f = f + RETRY_PB.PbBytes(4, pengirim_jid_teks);
+    }
+    hasil f;
+}
+
+fungsi retry_bangun_permintaan_dari_hp(chat_jid_teks, pengirim_jid_teks, msg_id, dari_saya) {
+    buat key = retry_bangun_message_key(chat_jid_teks, pengirim_jid_teks, msg_id, dari_saya);
+    buat resend = RETRY_PB.PbBytes(1, key);
+    buat pdop = RETRY_PB.PbVarint(1, 4) + RETRY_PB.PbBytes(5, resend);
+    buat proto_msg = RETRY_PB.PbVarint(1, 16) + RETRY_PB.PbBytes(16, pdop);
+    hasil RETRY_PB.PbBytes(12, proto_msg);
+}
+
+fungsi retry_tandai_minta_hp(state, msg_id) {
+    jika tipe(state["minta_hp_tertunda"][msg_id]) == "angka" { hasil salah; }
+    state["minta_hp_tertunda"][msg_id] = waktu();
+    hasil benar;
+}
+
+fungsi retry_batalkan_minta_hp(state, msg_id) {
+    state["minta_hp_tertunda"][msg_id] = kosong;
+}
+
+fungsi retry_minta_hp_siap(state, msg_id) {
+    buat t = state["minta_hp_tertunda"][msg_id];
+    jika tipe(t) != "angka" { hasil salah; }
+    hasil (waktu() - t) >= RETRY_JEDA_MINTA_HP;
+}
+
+fungsi retry_bersihkan_minta_hp(state) {
+    buat ks = peta_kunci(state["minta_hp_tertunda"]);
+    untuk (buat i = 0; i < panjang(ks); i = i + 1) { state["minta_hp_tertunda"][ks[i]] = kosong; }
+}

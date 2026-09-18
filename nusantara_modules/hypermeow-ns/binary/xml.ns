@@ -1,0 +1,108 @@
+
+buat MAX_BYTES_HEX = 128;
+
+fungsi _sensitif_attr(k) {
+    hasil k == "auth" || k == "pin" || k == "token";
+}
+
+fungsi _sensitif_konten(tag) {
+    jika tag == "access_token" { hasil benar; }
+    jika tag == "address" { hasil benar; }
+    jika tag == "code" { hasil benar; }
+    jika tag == "description" { hasil benar; }
+    jika tag == "email" { hasil benar; }
+    jika tag == "linked_accounts" { hasil benar; }
+    jika tag == "session_cookies" { hasil benar; }
+    jika tag == "token" { hasil benar; }
+    jika tag == "wa_ad_account_nonce" { hasil benar; }
+    jika tag == "website" { hasil benar; }
+    hasil salah;
+}
+
+fungsi _hex_dari_teks(s) {
+    buat CP = muat_plugin("crypto");
+    hasil CP["hex_encode"](s);
+}
+
+fungsi _bisa_cetak(s) {
+    untuk (buat i = 0; i < panjang(s); i = i + 1) {
+        buat c = byte_di(s, i);
+        jika c < 32 {
+            jika c != 9 { jika c != 10 { jika c != 13 { hasil salah; } } }
+        }
+        jika c == 127 { hasil salah; }
+    }
+    hasil benar;
+}
+
+fungsi _nilai_jid_ke_teks(j) {
+    buat JID = impor("../types/jid.ns");
+    hasil JID.JidKeTeks(j);
+}
+
+fungsi _attribute_string(attrs) {
+    jika peta_kosong(attrs) { hasil ""; }
+    buat ks = peta_kunci(attrs);
+    buat bag = [];
+    untuk (buat i = 0; i < panjang(ks); i = i + 1) {
+        buat k = ks[i];
+        buat v = attrs[k];
+        buat vs = "";
+        jika tipe(v) == "peta" { jika v["jid"] == benar { vs = _nilai_jid_ke_teks(v); } }
+        lain { jika tipe(v) == "boolean" { jika v { vs = "true"; } lain { vs = "false"; } }
+        lain { jika tipe(v) == "angka" { vs = ke_teks(v); }
+        lain { vs = v; } } }
+        jika _sensitif_attr(k) { vs = "[redacted]"; }
+        tambah(bag, k + "=\"" + vs + "\"");
+    }
+    hasil " " + gabung(urutkan(bag), " ");
+}
+
+fungsi peta_kosong(m) { hasil panjang(peta_kunci(m)) == 0; }
+
+fungsi urutkan(arr) {
+    buat a = [];
+    untuk (buat i = 0; i < panjang(arr); i = i + 1) { tambah(a, arr[i]); }
+    untuk (buat i = 0; i < panjang(a); i = i + 1) {
+        untuk (buat j = 0; j < panjang(a) - i - 1; j = j + 1) {
+            jika a[j] > a[j + 1] {
+                buat t = a[j]; a[j] = a[j + 1]; a[j + 1] = t;
+            }
+        }
+    }
+    hasil a;
+}
+
+fungsi _content_string(n) {
+    jika n["ada_isi"] == salah { hasil []; }
+    jika _sensitif_konten(n["tag"]) { hasil ["[redacted]"]; }
+    jika n["ctipe"] == "larik" {
+        buat out = [];
+        untuk (buat i = 0; i < panjang(n["children"]); i = i + 1) {
+            tambah(out, node_ke_string(n["children"][i]));
+        }
+        hasil out;
+    }
+    jika n["ctipe"] == "jid" { hasil [_nilai_jid_ke_teks(n["content"])]; }
+    jika n["ctipe"] == "teks" {
+        buat c = n["content"];
+        jika _bisa_cetak(c) { hasil [c]; }
+        jika panjang(c) > MAX_BYTES_HEX { hasil ["<!-- " + ke_teks(panjang(c)) + " bytes -->"]; }
+        hasil [_hex_dari_teks(c)];
+    }
+    jika n["ctipe"] == "bytes" {
+        buat c = n["content"];
+        jika _bisa_cetak(c) { hasil [c]; }
+        jika panjang(c) > MAX_BYTES_HEX { hasil ["<!-- " + ke_teks(panjang(c)) + " bytes -->"]; }
+        hasil [_hex_dari_teks(c)];
+    }
+    hasil [];
+}
+
+fungsi node_ke_string(n) {
+    buat content = _content_string(n);
+    jika panjang(content) == 0 {
+        hasil "<" + n["tag"] + _attribute_string(n["attrs"]) + "/>";
+    }
+    hasil "<" + n["tag"] + _attribute_string(n["attrs"]) + ">" + gabung(content, "") + "</" + n["tag"] + ">";
+}

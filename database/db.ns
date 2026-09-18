@@ -1,0 +1,233 @@
+
+buat SQL = muat_plugin("sqlite");
+buat handle_db = 0;
+
+fungsi Init(db_path) {
+    handle_db = SQL["db_buka"](db_path);
+    jika handle_db != 0 {
+        SQL["db_jalankan"](handle_db, "CREATE TABLE IF NOT EXISTS groups (id TEXT PRIMARY KEY, mute_open TEXT, mute_close TEXT);");
+        SQL["db_jalankan"](handle_db, "CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, is_owner INTEGER DEFAULT 0);");
+        SQL["db_jalankan"](handle_db, "CREATE TABLE IF NOT EXISTS commands (name TEXT PRIMARY KEY, category TEXT, description TEXT);");
+        SQL["db_jalankan"](handle_db, "CREATE TABLE IF NOT EXISTS session (id TEXT PRIMARY KEY, noise_priv TEXT, identity_priv TEXT, jid TEXT, lid TEXT, adv_secret TEXT);");
+        SQL["db_jalankan"](handle_db, "CREATE TABLE IF NOT EXISTS lid_map (lid TEXT PRIMARY KEY, jid TEXT);");
+        SQL["db_jalankan"](handle_db, "CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, chat TEXT, sender TEXT, body TEXT, tipe TEXT, ts INTEGER, wire_hex TEXT);");
+        coba { SQL["db_jalankan"](handle_db, "ALTER TABLE messages ADD COLUMN wire_hex TEXT;"); } tangkap (e) {}
+        SQL["db_jalankan"](handle_db, "CREATE TABLE IF NOT EXISTS approved_groups (jid TEXT PRIMARY KEY, approved_at INTEGER, approved_by TEXT);");
+        SQL["db_jalankan"](handle_db, "CREATE TABLE IF NOT EXISTS bot_errors (id INTEGER PRIMARY KEY AUTOINCREMENT, chat TEXT, sender TEXT, cmd TEXT, pesan TEXT, ts INTEGER);");
+        SQL["db_jalankan"](handle_db, "CREATE TABLE IF NOT EXISTS flags (kunci TEXT PRIMARY KEY, nilai TEXT);");
+        SQL["db_jalankan"](handle_db, "CREATE TABLE IF NOT EXISTS eval_send_queue (id TEXT PRIMARY KEY, chat TEXT, message_json TEXT, opsi_json TEXT, status TEXT DEFAULT 'pending', hasil_json TEXT, ts INTEGER);");
+        SQL["db_jalankan"](handle_db, "CREATE TABLE IF NOT EXISTS game_state (chat TEXT, game TEXT, data_json TEXT, expires_at INTEGER, PRIMARY KEY(chat, game));");
+        SQL["db_jalankan"](handle_db, "CREATE TABLE IF NOT EXISTS game_scores (chat TEXT, game TEXT, round_id INTEGER, user TEXT, score INTEGER, updated_at INTEGER, PRIMARY KEY(chat, game, round_id, user));");
+        hasil benar;
+    }
+    hasil salah;
+}
+
+fungsi SyncCommands(command_list) {
+    jika handle_db == 0 { hasil salah; }
+    untuk (buat i = 0; i < panjang(command_list); i = i + 1) {
+        buat c = command_list[i];
+        buat q = "INSERT INTO commands (name, category, description) VALUES ('" + c["Name"] + "', '" + c["Category"] + "', '" + c["Description"] + "') ON CONFLICT(name) DO UPDATE SET category='" + c["Category"] + "', description='" + c["Description"] + "';";
+        SQL["db_jalankan"](handle_db, q);
+    }
+    hasil benar;
+}
+
+fungsi GetGroupMute(jid) {
+    jika handle_db == 0 { hasil peta_baru(); }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT mute_open, mute_close FROM groups WHERE id='" + jid + "';"));
+    jika res["ok"] && panjang(res["rows"]) > 0 {
+        hasil res["rows"][0];
+    }
+    hasil peta_baru();
+}
+
+fungsi SimpanLIDJID(lid, jid) {
+    jika handle_db == 0 { hasil salah; }
+    buat q = "INSERT INTO lid_map (lid, jid) VALUES ('" + lid + "', '" + jid + "') ON CONFLICT(lid) DO UPDATE SET jid='" + jid + "';";
+    buat res = json_decode(SQL["db_jalankan"](handle_db, q));
+    jika res["ok"] { hasil benar; }
+    hasil salah;
+}
+
+fungsi LIDKeJID(lid) {
+    jika handle_db == 0 { hasil ""; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT jid FROM lid_map WHERE lid='" + lid + "';"));
+    jika res["ok"] && panjang(res["rows"]) > 0 {
+        hasil res["rows"][0]["jid"];
+    }
+    hasil "";
+}
+
+fungsi JIDKeLID(jid) {
+    jika handle_db == 0 { hasil ""; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT lid FROM lid_map WHERE jid='" + jid + "';"));
+    jika res["ok"] && panjang(res["rows"]) > 0 {
+        hasil res["rows"][0]["lid"];
+    }
+    hasil "";
+}
+
+fungsi SimpanPesan(id, chat, sender, body, tipe_pesan, wire_hex) {
+    jika handle_db == 0 || tipe(id) != "teks" || panjang(id) == 0 { hasil salah; }
+    jika tipe(wire_hex) != "teks" { wire_hex = ""; }
+    buat res = json_decode(SQL["db_jalankan"](handle_db,
+        "INSERT INTO messages (id, chat, sender, body, tipe, ts, wire_hex) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING;",
+        json_encode([id, chat, sender, body, tipe_pesan, waktu(), wire_hex])));
+    hasil res["ok"] == benar;
+}
+
+fungsi AmbilPesan(id) {
+    jika handle_db == 0 || tipe(id) != "teks" || panjang(id) == 0 { hasil kosong; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT * FROM messages WHERE id = ?;", json_encode([id])));
+    jika res["ok"] && panjang(res["rows"]) > 0 { hasil res["rows"][0]; }
+    hasil kosong;
+}
+
+fungsi SetujuiGrup(jid, oleh) {
+    jika handle_db == 0 || tipe(jid) != "teks" || panjang(jid) == 0 { hasil salah; }
+    buat res = json_decode(SQL["db_jalankan"](handle_db,
+        "INSERT INTO approved_groups (jid, approved_at, approved_by) VALUES (?, ?, ?) ON CONFLICT(jid) DO UPDATE SET approved_at=excluded.approved_at, approved_by=excluded.approved_by;",
+        json_encode([jid, waktu(), oleh])));
+    hasil res["ok"] == benar;
+}
+
+fungsi BatalGrup(jid) {
+    jika handle_db == 0 || tipe(jid) != "teks" || panjang(jid) == 0 { hasil salah; }
+    buat res = json_decode(SQL["db_jalankan"](handle_db, "DELETE FROM approved_groups WHERE jid = ?;", json_encode([jid])));
+    hasil res["ok"] == benar;
+}
+
+fungsi GrupDisetujui(jid) {
+    jika handle_db == 0 || tipe(jid) != "teks" || panjang(jid) == 0 { hasil salah; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT jid FROM approved_groups WHERE jid = ?;", json_encode([jid])));
+    hasil res["ok"] && panjang(res["rows"]) > 0;
+}
+
+fungsi CatatError(chat, sender, cmd, pesan) {
+    jika handle_db == 0 { hasil salah; }
+    buat res = json_decode(SQL["db_jalankan"](handle_db,
+        "INSERT INTO bot_errors (chat, sender, cmd, pesan, ts) VALUES (?, ?, ?, ?, ?);",
+        json_encode([chat, sender, cmd, pesan, waktu()])));
+    hasil res["ok"] == benar;
+}
+
+fungsi AmbilErrorTerbaru(batas) {
+    jika handle_db == 0 { hasil []; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT * FROM bot_errors ORDER BY id DESC LIMIT ?;", json_encode([batas])));
+    jika res["ok"] { hasil res["rows"]; }
+    hasil [];
+}
+
+fungsi SetFlag(kunci, nilai) {
+    jika handle_db == 0 { hasil salah; }
+    buat res = json_decode(SQL["db_jalankan"](handle_db,
+        "INSERT INTO flags (kunci, nilai) VALUES (?, ?) ON CONFLICT(kunci) DO UPDATE SET nilai=excluded.nilai;",
+        json_encode([kunci, nilai])));
+    hasil res["ok"] == benar;
+}
+
+fungsi AmbilFlag(kunci) {
+    jika handle_db == 0 { hasil ""; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT nilai FROM flags WHERE kunci = ?;", json_encode([kunci])));
+    jika res["ok"] && panjang(res["rows"]) > 0 { hasil res["rows"][0]["nilai"]; }
+    hasil "";
+}
+
+// Antrian permintaan kirim pesan dari sandbox eval (`>`) ke proses bot
+// utama -- eval jalan di subprocess `nusa -e` terpisah (gak nyambung ke
+// koneksi WA live, demi safety), jadi nopal.sendMessage() di dalam eval
+// nulis permintaan ke sini lewat SQLite bersama, terus proses bot utama
+// (loop koneksi) yang beneran eksekusi kirimnya dan nulis balik hasilnya.
+fungsi AntrianKirimBaru(id, chat, message_json, opsi_json) {
+    jika handle_db == 0 { hasil salah; }
+    coba { SQL["db_jalankan"](handle_db, "DELETE FROM eval_send_queue WHERE ts < ?;", json_encode([waktu() - 120])); } tangkap (e) {}
+    buat res = json_decode(SQL["db_jalankan"](handle_db,
+        "INSERT INTO eval_send_queue (id, chat, message_json, opsi_json, status, ts) VALUES (?, ?, ?, ?, 'pending', ?);",
+        json_encode([id, chat, message_json, opsi_json, waktu()])));
+    hasil res["ok"] == benar;
+}
+
+fungsi AntrianKirimPending(batas) {
+    jika handle_db == 0 { hasil []; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT id, chat, message_json, opsi_json FROM eval_send_queue WHERE status = 'pending' ORDER BY ts ASC LIMIT ?;", json_encode([batas])));
+    jika res["ok"] { hasil res["rows"]; }
+    hasil [];
+}
+
+fungsi AntrianKirimSelesai(id, status, hasil_json) {
+    jika handle_db == 0 { hasil salah; }
+    buat res = json_decode(SQL["db_jalankan"](handle_db,
+        "UPDATE eval_send_queue SET status = ?, hasil_json = ? WHERE id = ?;",
+        json_encode([status, hasil_json, id])));
+    hasil res["ok"] == benar;
+}
+
+fungsi AntrianKirimCek(id) {
+    jika handle_db == 0 { hasil kosong; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT status, hasil_json FROM eval_send_queue WHERE id = ?;", json_encode([id])));
+    jika res["ok"] && panjang(res["rows"]) > 0 { hasil res["rows"][0]; }
+    hasil kosong;
+}
+
+// State game per-chat, expire otomatis (lazy check -- dihapus begitu
+// dibaca/ditulis abis lewat expires_at, gak butuh cron/timer terpisah).
+fungsi GameStateSet(chat, game, data_json, ttl_detik) {
+    jika handle_db == 0 { hasil salah; }
+    buat expires_at = waktu() + ttl_detik;
+    buat res = json_decode(SQL["db_jalankan"](handle_db,
+        "INSERT INTO game_state (chat, game, data_json, expires_at) VALUES (?, ?, ?, ?) ON CONFLICT(chat, game) DO UPDATE SET data_json=excluded.data_json, expires_at=excluded.expires_at;",
+        json_encode([chat, game, data_json, expires_at])));
+    hasil res["ok"] == benar;
+}
+
+fungsi GameStateGet(chat, game) {
+    jika handle_db == 0 { hasil kosong; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT data_json, expires_at FROM game_state WHERE chat = ? AND game = ?;", json_encode([chat, game])));
+    jika res["ok"] && panjang(res["rows"]) > 0 {
+        buat row = res["rows"][0];
+        jika ke_angka(row["expires_at"]) < waktu() {
+            GameStateHapus(chat, game);
+            hasil kosong;
+        }
+        hasil row;
+    }
+    hasil kosong;
+}
+
+fungsi GameStateHapus(chat, game) {
+    jika handle_db == 0 { hasil salah; }
+    buat res = json_decode(SQL["db_jalankan"](handle_db, "DELETE FROM game_state WHERE chat = ? AND game = ?;", json_encode([chat, game])));
+    hasil res["ok"] == benar;
+}
+
+// Leaderboard per-chat/game/round -- round_id dipakai buat "reset otomatis"
+// (round baru = leaderboard baru), round lama dibersihkan lazy pas round
+// baru dimulai.
+fungsi GameScoreTambah(chat, game, round_id, user, delta) {
+    jika handle_db == 0 { hasil salah; }
+    buat res = json_decode(SQL["db_jalankan"](handle_db,
+        "INSERT INTO game_scores (chat, game, round_id, user, score, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(chat, game, round_id, user) DO UPDATE SET score = score + ?, updated_at = ?;",
+        json_encode([chat, game, round_id, user, delta, waktu(), delta, waktu()])));
+    hasil res["ok"] == benar;
+}
+
+fungsi GameScoreUser(chat, game, round_id, user) {
+    jika handle_db == 0 { hasil 0; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT score FROM game_scores WHERE chat = ? AND game = ? AND round_id = ? AND user = ?;", json_encode([chat, game, round_id, user])));
+    jika res["ok"] && panjang(res["rows"]) > 0 { hasil ke_angka(res["rows"][0]["score"]); }
+    hasil 0;
+}
+
+fungsi GameScoreLeaderboard(chat, game, round_id, batas) {
+    jika handle_db == 0 { hasil []; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT user, score FROM game_scores WHERE chat = ? AND game = ? AND round_id = ? ORDER BY score DESC LIMIT ?;", json_encode([chat, game, round_id, batas])));
+    jika res["ok"] { hasil res["rows"]; }
+    hasil [];
+}
+
+fungsi GameScoreBersihkanRoundLama(chat, game, round_id) {
+    jika handle_db == 0 { hasil salah; }
+    coba { SQL["db_jalankan"](handle_db, "DELETE FROM game_scores WHERE chat = ? AND game = ? AND round_id != ?;", json_encode([chat, game, round_id])); } tangkap (e) {}
+    hasil benar;
+}

@@ -1,0 +1,362 @@
+
+buat SQL = muat_plugin("sqlite");
+buat handle_db = 0;
+
+fungsi InisialisasiStore(db_path) {
+    handle_db = SQL["db_buka"](db_path);
+    jika handle_db != 0 {
+        SQL["db_jalankan"](handle_db, "PRAGMA journal_mode=WAL;");
+        SQL["db_jalankan"](handle_db, "PRAGMA synchronous=NORMAL;");
+        SQL["db_jalankan"](handle_db, "CREATE TABLE IF NOT EXISTS session (id TEXT PRIMARY KEY, noise_priv TEXT, identity_priv TEXT, jid TEXT, lid TEXT, adv_secret TEXT, registration_id TEXT, account_hex TEXT);");
+        SQL["db_jalankan"](handle_db, "CREATE TABLE IF NOT EXISTS sender_keys (id TEXT PRIMARY KEY, key_id INTEGER, iteration INTEGER, chain_key TEXT, signing_pub TEXT);");
+        SQL["db_jalankan"](handle_db, "CREATE TABLE IF NOT EXISTS sender_key_skipped (id TEXT, iteration INTEGER, seed_hex TEXT, PRIMARY KEY(id, iteration));");
+        SQL["db_jalankan"](handle_db, "CREATE TABLE IF NOT EXISTS sender_keys_out (group_user TEXT PRIMARY KEY, key_id INTEGER, iteration INTEGER, chain_key TEXT, signing_priv TEXT, signing_pub TEXT);");
+        SQL["db_jalankan"](handle_db, "CREATE TABLE IF NOT EXISTS send_sessions (device_key TEXT PRIMARY KEY, our_identity_pub TEXT, their_identity_pub TEXT, our_ratchet_priv TEXT, our_ratchet_pub TEXT, sending_chain_key TEXT, chain_index INTEGER);");
+        SQL["db_jalankan"](handle_db, "ALTER TABLE send_sessions ADD COLUMN base_pub TEXT;");
+        SQL["db_jalankan"](handle_db, "ALTER TABLE send_sessions ADD COLUMN their_spk_id INTEGER;");
+        SQL["db_jalankan"](handle_db, "ALTER TABLE send_sessions ADD COLUMN otp_id INTEGER;");
+        SQL["db_jalankan"](handle_db, "ALTER TABLE send_sessions ADD COLUMN acked INTEGER DEFAULT 0;");
+        SQL["db_jalankan"](handle_db, "CREATE TABLE IF NOT EXISTS group_devices (group_user TEXT, device_user TEXT, device_server TEXT, device_num INTEGER, PRIMARY KEY(group_user, device_user, device_num));");
+        SQL["db_jalankan"](handle_db, "CREATE TABLE IF NOT EXISTS user_devices (lid_user TEXT PRIMARY KEY, devices_json TEXT);");
+        SQL["db_jalankan"](handle_db, "CREATE TABLE IF NOT EXISTS msg_secrets (chat TEXT, sender TEXT, msg_id TEXT, secret TEXT, PRIMARY KEY(chat, sender, msg_id));");
+        SQL["db_jalankan"](handle_db, "CREATE TABLE IF NOT EXISTS appstate_keys (key_id TEXT PRIMARY KEY, key_data TEXT);");
+        SQL["db_jalankan"](handle_db, "CREATE TABLE IF NOT EXISTS appstate_version (name TEXT PRIMARY KEY, version INTEGER, hash TEXT);");
+        hasil benar;
+    }
+    hasil salah;
+}
+
+fungsi MulaiTransaksi() {
+    jika handle_db != 0 { SQL["db_jalankan"](handle_db, "BEGIN TRANSACTION;"); }
+}
+
+fungsi SelesaiTransaksi() {
+    jika handle_db != 0 { SQL["db_jalankan"](handle_db, "COMMIT;"); }
+}
+
+fungsi BatalTransaksi() {
+    jika handle_db != 0 { SQL["db_jalankan"](handle_db, "ROLLBACK;"); }
+}
+
+fungsi SimpanSesi(session_id, noise_priv_hex, identity_priv_hex, jid, lid, adv_secret_hex) {
+    jika handle_db == 0 { hasil salah; }
+    buat q = "INSERT INTO session (id, noise_priv, identity_priv, jid, lid, adv_secret) VALUES ('" + session_id + "', '" + noise_priv_hex + "', '" + identity_priv_hex + "', '" + jid + "', '" + lid + "', '" + adv_secret_hex + "') ON CONFLICT(id) DO UPDATE SET noise_priv='" + noise_priv_hex + "', identity_priv='" + identity_priv_hex + "', jid='" + jid + "', lid='" + lid + "', adv_secret='" + adv_secret_hex + "';";
+    buat res = json_decode(SQL["db_jalankan"](handle_db, q));
+    jika res["ok"] { hasil benar; }
+    hasil salah;
+}
+
+fungsi SimpanPrekeyInfo(session_id, signed_prekey_priv_hex, signed_prekey_id_str, registration_id_str, account_hex) {
+    jika handle_db == 0 { hasil salah; }
+    buat q = "UPDATE session SET signed_prekey_priv='" + signed_prekey_priv_hex + "', signed_prekey_id='" + signed_prekey_id_str + "', registration_id='" + registration_id_str + "', account_hex='" + account_hex + "' WHERE id='" + session_id + "';";
+    buat res = json_decode(SQL["db_jalankan"](handle_db, q));
+    jika res["ok"] { hasil benar; }
+    hasil salah;
+}
+
+fungsi MuatSesi(session_id) {
+    jika handle_db == 0 { hasil peta_baru(); }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT noise_priv, identity_priv, jid, lid, adv_secret, registration_id, account_hex, signed_prekey_priv, signed_prekey_id FROM session WHERE id='" + session_id + "';"));
+    jika res["ok"] && panjang(res["rows"]) > 0 {
+        hasil res["rows"][0];
+    }
+    hasil peta_baru();
+}
+
+fungsi CariPrekeyPrivat(key_id) {
+    jika handle_db == 0 { hasil kosong; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT priv FROM prekeys_privat WHERE key_id=" + ke_teks(key_id) + ";"));
+    jika res["ok"] && panjang(res["rows"]) > 0 {
+        hasil res["rows"][0]["priv"];
+    }
+    hasil kosong;
+}
+
+fungsi SimpanPrekeyPrivat(key_id, priv_hex) {
+    jika handle_db == 0 { hasil salah; }
+    buat q = "INSERT OR REPLACE INTO prekeys_privat (key_id, priv) VALUES (" + ke_teks(key_id) + ", '" + priv_hex + "');";
+    buat res = json_decode(SQL["db_jalankan"](handle_db, q));
+    jika res["ok"] { hasil benar; }
+    hasil salah;
+}
+
+fungsi AmbilMaxPrekeyId() {
+    jika handle_db == 0 { hasil 0; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT MAX(key_id) AS m FROM prekeys_privat;"));
+    jika res["ok"] && panjang(res["rows"]) > 0 && tipe(res["rows"][0]["m"]) == "angka" {
+        hasil res["rows"][0]["m"];
+    }
+    hasil 0;
+}
+
+fungsi SimpanSenderKey(id, key_id, iteration, chain_key_hex, signing_pub_hex) {
+    jika handle_db == 0 { hasil salah; }
+    buat q = "INSERT INTO sender_keys (id, key_id, iteration, chain_key, signing_pub) VALUES ('" + id + "', " + ke_teks(key_id) + ", " + ke_teks(iteration) + ", '" + chain_key_hex + "', '" + signing_pub_hex + "') ON CONFLICT(id) DO UPDATE SET key_id=" + ke_teks(key_id) + ", iteration=" + ke_teks(iteration) + ", chain_key='" + chain_key_hex + "', signing_pub='" + signing_pub_hex + "';";
+    buat res = json_decode(SQL["db_jalankan"](handle_db, q));
+    jika res["ok"] { hasil benar; }
+    hasil salah;
+}
+
+fungsi CariSenderKey(id) {
+    jika handle_db == 0 { hasil kosong; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT key_id, iteration, chain_key, signing_pub FROM sender_keys WHERE id='" + id + "';"));
+    jika res["ok"] && panjang(res["rows"]) > 0 {
+        hasil res["rows"][0];
+    }
+    hasil kosong;
+}
+
+fungsi UpdateSenderKeyProgress(id, iteration_baru, chain_key_baru_hex) {
+    jika handle_db == 0 { hasil salah; }
+    buat q = "UPDATE sender_keys SET iteration=" + ke_teks(iteration_baru) + ", chain_key='" + chain_key_baru_hex + "' WHERE id='" + id + "';";
+    buat res = json_decode(SQL["db_jalankan"](handle_db, q));
+    jika res["ok"] { hasil benar; }
+    hasil salah;
+}
+
+// Sender-key ratchet cuma bisa maju (HMAC one-way) -- kalau pesan out-of-
+// order bikin state lompat maju ngelewatin beberapa iterasi, message-key
+// buat iterasi yang dilewatin disimpen di sini dulu (sekali pakai, di-
+// hapus begitu dipakai) supaya pesan yang telat masih bisa didekripsi
+// tanpa perlu mundurin ratchet (yang emang gak mungkin secara kriptografi).
+fungsi SimpanSkippedKey(id, iteration, seed_hex) {
+    jika handle_db == 0 { hasil salah; }
+    buat q = "INSERT INTO sender_key_skipped (id, iteration, seed_hex) VALUES ('" + id + "', " + ke_teks(iteration) + ", '" + seed_hex + "') ON CONFLICT(id, iteration) DO UPDATE SET seed_hex='" + seed_hex + "';";
+    buat res = json_decode(SQL["db_jalankan"](handle_db, q));
+    jika res["ok"] { hasil benar; }
+    hasil salah;
+}
+
+fungsi AmbilSkippedKey(id, iteration) {
+    jika handle_db == 0 { hasil kosong; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT seed_hex FROM sender_key_skipped WHERE id='" + id + "' AND iteration=" + ke_teks(iteration) + ";"));
+    jika res["ok"] && panjang(res["rows"]) > 0 { hasil res["rows"][0]["seed_hex"]; }
+    hasil kosong;
+}
+
+fungsi HapusSkippedKey(id, iteration) {
+    jika handle_db == 0 { hasil salah; }
+    buat res = json_decode(SQL["db_jalankan"](handle_db, "DELETE FROM sender_key_skipped WHERE id='" + id + "' AND iteration=" + ke_teks(iteration) + ";"));
+    jika res["ok"] { hasil benar; }
+    hasil salah;
+}
+
+// Batesin jumlah skipped-key per sender-key id (paling lama dibuang duluan)
+// biar tabel gak numpuk gak abis-abis kalau ada sender yang terus-terusan
+// out-of-order.
+fungsi PruneSkippedKeys(id, maks_simpan) {
+    jika handle_db == 0 { hasil salah; }
+    buat q = "DELETE FROM sender_key_skipped WHERE id='" + id + "' AND iteration NOT IN (SELECT iteration FROM sender_key_skipped WHERE id='" + id + "' ORDER BY iteration DESC LIMIT " + ke_teks(maks_simpan) + ");";
+    buat res = json_decode(SQL["db_jalankan"](handle_db, q));
+    jika res["ok"] { hasil benar; }
+    hasil salah;
+}
+
+fungsi CariSenderKeyKirim(group_user) {
+    jika handle_db == 0 { hasil kosong; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT key_id, iteration, chain_key, signing_priv, signing_pub FROM sender_keys_out WHERE group_user='" + group_user + "';"));
+    jika res["ok"] && panjang(res["rows"]) > 0 {
+        hasil res["rows"][0];
+    }
+    hasil kosong;
+}
+
+fungsi SimpanSenderKeyKirim(group_user, key_id, iteration, chain_key_hex, signing_priv_hex, signing_pub_hex) {
+    jika handle_db == 0 { hasil salah; }
+    buat q = "INSERT INTO sender_keys_out (group_user, key_id, iteration, chain_key, signing_priv, signing_pub) VALUES ('" + group_user + "', " + ke_teks(key_id) + ", " + ke_teks(iteration) + ", '" + chain_key_hex + "', '" + signing_priv_hex + "', '" + signing_pub_hex + "');";
+    buat res = json_decode(SQL["db_jalankan"](handle_db, q));
+    jika res["ok"] { hasil benar; }
+    hasil salah;
+}
+
+fungsi UpdateSenderKeyKirimProgress(group_user, iteration_baru, chain_key_baru_hex) {
+    jika handle_db == 0 { hasil salah; }
+    buat q = "UPDATE sender_keys_out SET iteration=" + ke_teks(iteration_baru) + ", chain_key='" + chain_key_baru_hex + "' WHERE group_user='" + group_user + "';";
+    buat res = json_decode(SQL["db_jalankan"](handle_db, q));
+    jika res["ok"] { hasil benar; }
+    hasil salah;
+}
+
+fungsi CariSesiKirim(DeviceKey) {
+    jika handle_db == 0 { hasil kosong; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT our_identity_pub, their_identity_pub, our_ratchet_priv, our_ratchet_pub, sending_chain_key, chain_index, base_pub, their_spk_id, otp_id, acked FROM send_sessions WHERE device_key='" + DeviceKey + "';"));
+    jika res["ok"] && panjang(res["rows"]) > 0 {
+        hasil res["rows"][0];
+    }
+    hasil kosong;
+}
+
+fungsi MuatSemuaSesiKirim() {
+    jika handle_db == 0 { hasil peta_baru(); }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT device_key, our_identity_pub, their_identity_pub, our_ratchet_priv, our_ratchet_pub, sending_chain_key, chain_index, base_pub, their_spk_id, otp_id, acked FROM send_sessions;"));
+    buat out = peta_baru();
+    jika res["ok"] {
+        untuk (buat i = 0; i < panjang(res["rows"]); i = i + 1) {
+            buat row = res["rows"][i];
+            out[row["device_key"]] = row;
+        }
+    }
+    hasil out;
+}
+
+fungsi SimpanSesiKirim(DeviceKey, our_identity_pub_hex, their_identity_pub_hex, our_ratchet_priv_hex, our_ratchet_pub_hex, sending_chain_key_hex, chain_index, base_pub_hex, their_spk_id, otp_id) {
+    jika handle_db == 0 { hasil salah; }
+    buat otp_sql = "NULL";
+    jika tipe(otp_id) == "angka" { otp_sql = ke_teks(otp_id); }
+    buat q = "INSERT OR REPLACE INTO send_sessions (device_key, our_identity_pub, their_identity_pub, our_ratchet_priv, our_ratchet_pub, sending_chain_key, chain_index, base_pub, their_spk_id, otp_id, acked) VALUES ('" + DeviceKey + "', '" + our_identity_pub_hex + "', '" + their_identity_pub_hex + "', '" + our_ratchet_priv_hex + "', '" + our_ratchet_pub_hex + "', '" + sending_chain_key_hex + "', " + ke_teks(chain_index) + ", '" + base_pub_hex + "', " + ke_teks(their_spk_id) + ", " + otp_sql + ", 0);";
+    buat res = json_decode(SQL["db_jalankan"](handle_db, q));
+    jika res["ok"] { hasil benar; }
+    hasil salah;
+}
+
+fungsi TandaiSesiKirimAcked(DeviceKey) {
+    jika handle_db == 0 { hasil salah; }
+    buat res = json_decode(SQL["db_jalankan"](handle_db, "UPDATE send_sessions SET acked=1 WHERE device_key='" + DeviceKey + "';"));
+    jika res["ok"] { hasil benar; }
+    hasil salah;
+}
+
+fungsi HapusSesiKirim(DeviceKey) {
+    jika handle_db == 0 { hasil salah; }
+    buat res = json_decode(SQL["db_jalankan"](handle_db, "DELETE FROM send_sessions WHERE device_key='" + DeviceKey + "';"));
+    jika res["ok"] { hasil benar; }
+    hasil salah;
+}
+
+fungsi UpdateSesiKirimProgress(DeviceKey, chain_index_baru, chain_key_baru_hex) {
+    jika handle_db == 0 { hasil salah; }
+    buat q = "UPDATE send_sessions SET chain_index=" + ke_teks(chain_index_baru) + ", sending_chain_key='" + chain_key_baru_hex + "' WHERE device_key='" + DeviceKey + "';";
+    buat res = json_decode(SQL["db_jalankan"](handle_db, q));
+    jika res["ok"] { hasil benar; }
+    hasil salah;
+}
+
+fungsi JalankanQueryMentah(sql) {
+    jika handle_db == 0 { hasil salah; }
+    buat res = json_decode(SQL["db_jalankan"](handle_db, sql));
+    jika res["ok"] { hasil benar; }
+    hasil salah;
+}
+
+
+fungsi SimpanMsgSecret(chat, sender, msg_id, secret_hex) {
+    jika handle_db == 0 { hasil salah; }
+    buat q = "INSERT OR REPLACE INTO msg_secrets (chat, sender, msg_id, secret) VALUES ('" + chat + "', '" + sender + "', '" + msg_id + "', '" + secret_hex + "');";
+    buat res = json_decode(SQL["db_jalankan"](handle_db, q));
+    jika res["ok"] { hasil benar; }
+    hasil salah;
+}
+
+fungsi CariMsgSecret(chat, sender, msg_id) {
+    jika handle_db == 0 { hasil kosong; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT secret, sender FROM msg_secrets WHERE chat='" + chat + "' AND msg_id='" + msg_id + "' AND sender='" + sender + "';"));
+    jika res["ok"] && panjang(res["rows"]) > 0 { hasil res["rows"][0]; }
+    buat res2 = json_decode(SQL["db_query"](handle_db, "SELECT secret, sender FROM msg_secrets WHERE chat='" + chat + "' AND msg_id='" + msg_id + "';"));
+    jika res2["ok"] && panjang(res2["rows"]) > 0 { hasil res2["rows"][0]; }
+    hasil kosong;
+}
+
+fungsi simpan_appstate_key(key_id_hex, key_data_hex) {
+    jika handle_db == 0 { hasil salah; }
+    buat res = json_decode(SQL["db_jalankan"](handle_db, "INSERT OR REPLACE INTO appstate_keys (key_id, key_data) VALUES ('" + key_id_hex + "', '" + key_data_hex + "');"));
+    jika res["ok"] { hasil benar; }
+    hasil salah;
+}
+
+fungsi CariAppstateKey(key_id_hex) {
+    jika handle_db == 0 { hasil kosong; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT key_data FROM appstate_keys WHERE key_id='" + key_id_hex + "';"));
+    jika res["ok"] && panjang(res["rows"]) > 0 { hasil res["rows"][0]["key_data"]; }
+    hasil kosong;
+}
+
+fungsi SimpanAppstateVersi(nama, versi, hash_hex) {
+    jika handle_db == 0 { hasil salah; }
+    buat res = json_decode(SQL["db_jalankan"](handle_db, "INSERT OR REPLACE INTO appstate_version (name, version, hash) VALUES ('" + nama + "', " + ke_teks(versi) + ", '" + hash_hex + "');"));
+    jika res["ok"] { hasil benar; }
+    hasil salah;
+}
+
+fungsi CariAppstateVersi(nama) {
+    jika handle_db == 0 { hasil kosong; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT version, hash FROM appstate_version WHERE name='" + nama + "';"));
+    jika res["ok"] && panjang(res["rows"]) > 0 { hasil res["rows"][0]; }
+    hasil kosong;
+}
+
+fungsi SimpanGroupDevices(group_user, devices) {
+    jika handle_db == 0 { hasil salah; }
+    SQL["db_jalankan"](handle_db, "DELETE FROM group_devices WHERE group_user='" + group_user + "';");
+    untuk (buat i = 0; i < panjang(devices); i = i + 1) {
+        buat d = devices[i];
+        buat q = "INSERT OR IGNORE INTO group_devices (group_user, device_user, device_server, device_num) VALUES ('" + group_user + "', '" + d["user"] + "', '" + d["server"] + "', " + ke_teks(d["device"]) + ");";
+        SQL["db_jalankan"](handle_db, q);
+    }
+    hasil benar;
+}
+
+fungsi HapusGroupUserDevices(group_user, target_user) {
+    jika handle_db == 0 { hasil salah; }
+    buat res = json_decode(SQL["db_jalankan"](handle_db, "DELETE FROM group_devices WHERE group_user='" + group_user + "' AND device_user='" + target_user + "';"));
+    jika res["ok"] { hasil benar; }
+    hasil salah;
+}
+
+fungsi HapusGroupDevices(group_user) {
+    jika handle_db == 0 { hasil salah; }
+    buat res = json_decode(SQL["db_jalankan"](handle_db, "DELETE FROM group_devices WHERE group_user='" + group_user + "';"));
+    jika res["ok"] { hasil benar; }
+    hasil salah;
+}
+
+fungsi HapusSemuaGroupDevices() {
+    jika handle_db == 0 { hasil salah; }
+    buat res = json_decode(SQL["db_jalankan"](handle_db, "DELETE FROM group_devices;"));
+    jika res["ok"] { hasil benar; }
+    hasil salah;
+}
+
+fungsi CariGroupDevices(group_user) {
+    jika handle_db == 0 { hasil []; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT device_user, device_server, device_num FROM group_devices WHERE group_user='" + group_user + "';"));
+    buat out = [];
+    jika res["ok"] {
+        untuk (buat i = 0; i < panjang(res["rows"]); i = i + 1) {
+            buat row = res["rows"][i];
+            buat d = peta_baru();
+            d["user"] = row["device_user"]; d["server"] = row["device_server"]; d["device"] = row["device_num"];
+            tambah(out, d);
+        }
+    }
+    hasil out;
+}
+
+// Cache device list per-PARTICIPANT (bukan per-grup) -- niru GetUserDevices
+// whatsmeow asli: sekali dapet device list user X, dipake lagi di grup
+// manapun X ada, dan cuma di-invalidate kalau ada notifikasi "devices"
+// dari X sendiri (device baru/dicabut), bukan pas ada member lain
+// keluar-masuk grup.
+fungsi CariUserDevices(lid_user) {
+    jika handle_db == 0 { hasil []; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT devices_json FROM user_devices WHERE lid_user='" + lid_user + "';"));
+    jika res["ok"] && panjang(res["rows"]) > 0 {
+        buat parsed = json_decode(res["rows"][0]["devices_json"]);
+        jika tipe(parsed) == "larik" { hasil parsed; }
+    }
+    hasil [];
+}
+
+fungsi SimpanUserDevices(lid_user, devices) {
+    jika handle_db == 0 { hasil salah; }
+    buat q = "INSERT INTO user_devices (lid_user, devices_json) VALUES (?, ?) ON CONFLICT(lid_user) DO UPDATE SET devices_json=excluded.devices_json;";
+    buat res = json_decode(SQL["db_jalankan"](handle_db, q, json_encode([lid_user, json_encode(devices)])));
+    jika res["ok"] { hasil benar; }
+    hasil salah;
+}
+
+fungsi HapusUserDevices(lid_user) {
+    jika handle_db == 0 { hasil salah; }
+    buat res = json_decode(SQL["db_jalankan"](handle_db, "DELETE FROM user_devices WHERE lid_user='" + lid_user + "';"));
+    jika res["ok"] { hasil benar; }
+    hasil salah;
+}

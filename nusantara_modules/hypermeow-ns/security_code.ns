@@ -1,0 +1,197 @@
+buat PB  = impor("proto/pb.ns");
+buat JID = impor("types/jid.ns");
+buat CP  = muat_plugin("crypto");
+
+buat SECCODE_ITERASI = 5200;
+buat SECCODE_HOSTED_E2EE = 0;
+buat SECCODE_HOSTED_HOSTED = 1;
+
+fungsi _seccode_sha512(data) {
+    hasil CP["hex_decode"](potong(CP["sha512_hex"](data), 0, 128));
+}
+
+fungsi _seccode_pad5(n) {
+    buat s = ke_teks(n);
+    selama panjang(s) < 5 { s = "0" + s; }
+    hasil s;
+}
+
+fungsi seccode_urutkan_kunci(kunci_list) {
+    buat out = [];
+    untuk (buat i = 0; i < panjang(kunci_list); i = i + 1) { tambah(out, kunci_list[i]); }
+    untuk (buat i = 1; i < panjang(out); i = i + 1) {
+        buat k = out[i];
+        buat j = i - 1;
+        selama j >= 0 && out[j] > k {
+            out[j + 1] = out[j];
+            j = j - 1;
+        }
+        out[j + 1] = k;
+    }
+    hasil out;
+}
+
+fungsi seccode_serialisasi_kunci(kunci_list) {
+    buat urut = seccode_urutkan_kunci(kunci_list);
+    buat s = "";
+    buat prefiks = CP["hex_decode"]("05");
+    untuk (buat i = 0; i < panjang(urut); i = i + 1) {
+        s = s + prefiks + urut[i];
+    }
+    hasil s;
+}
+
+fungsi seccode_fingerprint(identifier, kunci_serial) {
+    buat awal = CP["hex_decode"]("0000") + kunci_serial + identifier;
+    buat digest = _seccode_sha512(awal);
+    untuk (buat i = 0; i < SECCODE_ITERASI; i = i + 1) {
+        digest = _seccode_sha512(digest + kunci_serial);
+    }
+    buat kode = "";
+    untuk (buat o = 0; o < 30; o = o + 5) {
+        buat v = byte_di(digest, o) * 4294967296
+               + byte_di(digest, o + 1) * 16777216
+               + byte_di(digest, o + 2) * 65536
+               + byte_di(digest, o + 3) * 256
+               + byte_di(digest, o + 4);
+        kode = kode + _seccode_pad5(v % 100000);
+    }
+    hasil kode;
+}
+
+fungsi seccode_kode_numerik(id_lokal, kunci_lokal, id_remote, kunci_remote) {
+    buat lokal = seccode_fingerprint(id_lokal, seccode_serialisasi_kunci(kunci_lokal));
+    buat remote = seccode_fingerprint(id_remote, seccode_serialisasi_kunci(kunci_remote));
+    jika lokal < remote { hasil lokal + remote; }
+    hasil remote + lokal;
+}
+
+fungsi seccode_fingerprint_baru(lid, telepon, username, kunci_list, hosted) {
+    buat f = peta_baru();
+    f["lid"] = lid;
+    f["telepon"] = telepon;
+    f["username"] = "";
+    jika tipe(username) == "teks" { f["username"] = username; }
+    f["kunci"] = kunci_list;
+    f["hosted"] = salah;
+    jika hosted == benar { f["hosted"] = benar; }
+    hasil f;
+}
+
+fungsi seccode_validasi_fingerprint(f) {
+    jika tipe(f) != "peta" || tipe(f["lid"]) != "peta" { lempar "LID wajib ada"; }
+    jika f["lid"]["server"] != JID.SRV_LID || panjang(f["lid"]["user"]) == 0 { lempar "LID wajib ada"; }
+    jika tipe(f["telepon"]) == "peta" && JID.JidKosong(f["telepon"]) == salah {
+        jika f["telepon"]["server"] != JID.SRV_DEF { lempar "nomor telepon harus JID nomor telepon"; }
+    }
+    jika tipe(f["kunci"]) != "larik" || panjang(f["kunci"]) == 0 { lempar "minimal butuh satu identity key"; }
+    hasil benar;
+}
+
+fungsi seccode_data_fingerprint(f, sertakan_mentah) {
+    buat serial = seccode_serialisasi_kunci(f["kunci"]);
+    buat hash = _seccode_sha512(serial);
+    buat hosted_state = SECCODE_HOSTED_E2EE;
+    jika f["hosted"] == benar { hosted_state = SECCODE_HOSTED_HOSTED; }
+
+    buat fields = [];
+    jika sertakan_mentah == benar { tambah(fields, PB.PbBytes(1, serial)); }
+    jika tipe(f["telepon"]) == "peta" && JID.JidKosong(f["telepon"]) == salah {
+        tambah(fields, PB.PbBytes(2, f["telepon"]["user"]));
+    }
+    tambah(fields, PB.PbBytes(3, JID.JidKeTeks(f["lid"])));
+    tambah(fields, PB.PbBytes(4, f["username"]));
+    tambah(fields, PB.PbVarint(5, hosted_state));
+    tambah(fields, PB.PbBytes(6, hash));
+    hasil PB.PbEnkode(fields);
+}
+
+fungsi seccode_gabung_fingerprint(lokal, remote, sertakan_mentah) {
+    buat fields = [PB.PbVarint(1, 1)];
+    tambah(fields, PB.PbBytes(2, seccode_data_fingerprint(lokal, sertakan_mentah)));
+    tambah(fields, PB.PbBytes(3, seccode_data_fingerprint(remote, sertakan_mentah)));
+    hasil PB.PbEnkode(fields);
+}
+
+fungsi seccode_qr(lokal, remote) {
+    coba {
+        seccode_validasi_fingerprint(lokal);
+    } tangkap (e) {
+        lempar "fingerprint lokal gak valid: " + ke_teks(e);
+    }
+    coba {
+        seccode_validasi_fingerprint(remote);
+    } tangkap (e2) {
+        lempar "fingerprint remote gak valid: " + ke_teks(e2);
+    }
+    buat r = peta_baru();
+    r["tampilan"] = seccode_gabung_fingerprint(lokal, remote, salah);
+    r["verifikasi"] = seccode_gabung_fingerprint(lokal, remote, benar);
+    hasil r;
+}
+
+fungsi seccode_bangun_kode(lokal, remote) {
+    buat numerik = seccode_kode_numerik(lokal["lid"]["user"], lokal["kunci"],
+                                        remote["lid"]["user"], remote["kunci"]);
+    buat qr = seccode_qr(lokal, remote);
+    buat r = peta_baru();
+    r["user_id"] = remote["lid"];
+    r["nomor_telepon"] = remote["telepon"];
+    r["username"] = remote["username"];
+    r["kode_numerik"] = numerik;
+    r["qr_tampilan"] = qr["tampilan"];
+    r["qr_verifikasi"] = qr["verifikasi"];
+    hasil r;
+}
+
+fungsi seccode_pisah_perangkat(perangkat, lid_lokal, lid_remote, device_sekarang, punya_device_sekarang) {
+    buat lokal = [];
+    buat remote = [];
+    untuk (buat i = 0; i < panjang(perangkat); i = i + 1) {
+        buat d = perangkat[i];
+        buat srv_ok = (d["server"] == JID.SRV_LID || d["server"] == JID.SRV_HOSTED_LID);
+        jika srv_ok == salah { lanjut; }
+        jika d["user"] == lid_lokal["user"] {
+            jika punya_device_sekarang == salah || d["device"] != device_sekarang {
+                tambah(lokal, d);
+            }
+        } lain jika d["user"] == lid_remote["user"] {
+            tambah(remote, d);
+        }
+    }
+    buat r = peta_baru();
+    r["lokal"] = lokal;
+    r["remote"] = remote;
+    hasil r;
+}
+
+fungsi seccode_ada_perangkat_hosted(perangkat) {
+    untuk (buat i = 0; i < panjang(perangkat); i = i + 1) {
+        buat s = perangkat[i]["server"];
+        jika s == JID.SRV_HOSTED_LID || s == JID.SRV_HOSTED { hasil benar; }
+    }
+    hasil salah;
+}
+
+fungsi seccode_validasi_target(user_id, lid_lokal) {
+    jika tipe(user_id) != "peta" { lempar "verifikasi identitas butuh user ID @lid"; }
+    buat n = JID.JidToNonAd(user_id);
+    jika n["server"] != JID.SRV_LID || panjang(n["user"]) == 0 {
+        lempar "verifikasi identitas butuh user ID @lid";
+    }
+    jika tipe(lid_lokal) != "peta" || lid_lokal["server"] != JID.SRV_LID || panjang(lid_lokal["user"]) == 0 {
+        lempar "LID lokal gak tersedia";
+    }
+    jika lid_lokal["user"] == n["user"] {
+        lempar "gak bisa bikin kode verifikasi identitas buat user lokal";
+    }
+    hasil n;
+}
+
+fungsi seccode_baca_identity_keys(perangkat) {
+    lempar "belum didukung: baca identity key batch butuh identity store + fetch prekey yang belum ada di .ns";
+}
+
+fungsi seccode_ambil_kode_verifikasi(user_id) {
+    lempar "belum didukung: butuh GetUserDevices + identity store batch read; pakai seccode_bangun_kode dengan kunci yang sudah dikumpulkan";
+}

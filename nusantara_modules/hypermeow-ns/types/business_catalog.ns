@@ -1,0 +1,189 @@
+
+buat BUSINESS_MERCHANT_ENTITY_SOLE_PROPRIETORSHIP = "SOLE_PROPRIETORSHIP";
+buat BUSINESS_MERCHANT_ENTITY_PARTNERSHIP = "PARTNERSHIP";
+buat BUSINESS_MERCHANT_ENTITY_PRIVATE_COMPANY = "PRIVATE_COMPANY";
+buat BUSINESS_MERCHANT_ENTITY_PUBLIC_COMPANY = "PUBLIC_COMPANY";
+buat BUSINESS_MERCHANT_ENTITY_LLP = "LIMITED_LIABILITY_PARTNERSHIP";
+buat BUSINESS_MERCHANT_ENTITY_OTHER = "OTHER";
+
+fungsi baru_business_address() {
+    buat m = peta_baru();
+    m["street1"] = ""; m["street2"] = ""; m["city"] = ""; m["region"] = "";
+    m["postal_code"] = ""; m["country_code"] = "";
+    hasil m;
+}
+
+fungsi baru_business_compliance_info() {
+    buat m = peta_baru();
+    m["country_code_origin"] = ""; m["importer_name"] = ""; m["importer_address"] = kosong;
+    hasil m;
+}
+
+fungsi baru_business_product_image() {
+    buat m = peta_baru();
+    m["id"] = ""; m["original_image_url"] = ""; m["request_image_url"] = "";
+    hasil m;
+}
+
+fungsi baru_business_product_video() {
+    buat m = peta_baru();
+    m["id"] = ""; m["original_video_url"] = ""; m["thumbnail_url"] = "";
+    hasil m;
+}
+
+fungsi baru_business_product_media() {
+    buat m = peta_baru();
+    m["images"] = []; m["videos"] = [];
+    hasil m;
+}
+
+fungsi baru_business_sale_price() {
+    buat m = peta_baru();
+    m["price"] = ""; m["start_date"] = ""; m["end_date"] = "";
+    hasil m;
+}
+
+fungsi baru_business_product_status() {
+    buat m = peta_baru();
+    m["status"] = ""; m["can_appeal"] = salah;
+    hasil m;
+}
+
+fungsi baru_business_dimensions() {
+    buat m = peta_baru();
+    m["width"] = 0; m["height"] = 0;
+    hasil m;
+}
+
+fungsi baru_business_variant_property() {
+    buat m = peta_baru();
+    m["name"] = ""; m["value"] = "";
+    hasil m;
+}
+
+fungsi baru_business_variant_thumbnail() {
+    buat m = peta_baru();
+    m["id"] = ""; m["original_image_url"] = ""; m["request_image_url"] = "";
+    m["original_dimensions"] = baru_business_dimensions();
+    hasil m;
+}
+
+fungsi baru_business_variant_option() {
+    buat m = peta_baru();
+    m["value"] = ""; m["thumbnail_media"] = kosong;
+    hasil m;
+}
+
+fungsi baru_business_variant_type() {
+    buat m = peta_baru();
+    m["name"] = ""; m["options"] = [];
+    hasil m;
+}
+
+fungsi baru_business_variant_listing() {
+    buat m = peta_baru();
+    m["description"] = ""; m["lowest_price"] = ""; m["multi_price"] = "";
+    hasil m;
+}
+
+fungsi baru_business_variant_availability_item() {
+    buat m = peta_baru();
+    m["product_id"] = ""; m["is_available"] = salah; m["options"] = [];
+    hasil m;
+}
+
+fungsi baru_business_variant_availability() {
+    buat m = peta_baru();
+    m["listing"] = [];
+    hasil m;
+}
+
+fungsi baru_business_product_variant() {
+    buat m = peta_baru();
+    m["availability"] = baru_business_variant_availability();
+    m["listing_details"] = baru_business_variant_listing();
+    m["types"] = []; m["variant_properties"] = [];
+    hasil m;
+}
+
+fungsi baru_business_product() {
+    buat m = peta_baru();
+    m["id"] = ""; m["retailer_id"] = ""; m["belongs_to"] = ""; m["name"] = "";
+    m["description"] = ""; m["price"] = ""; m["currency"] = ""; m["url"] = ""; m["shimmed_url"] = "";
+    m["is_hidden"] = salah; m["is_sanctioned"] = salah; m["max_available"] = 0;
+    m["product_availability"] = ""; m["compliance_category"] = ""; m["compliance_info"] = kosong;
+    m["media"] = baru_business_product_media(); m["sale_price"] = kosong;
+    m["status_info"] = baru_business_product_status(); m["variant_info"] = kosong;
+    hasil m;
+}
+
+fungsi baru_business_product_input() {
+    buat m = peta_baru();
+    m["name"] = ""; m["description"] = ""; m["currency"] = ""; m["price"] = ""; m["sale_price"] = "";
+    m["url"] = ""; m["retailer_id"] = ""; m["is_hidden"] = salah;
+    m["image_urls"] = []; m["video_urls"] = []; m["compliance_category"] = ""; m["compliance_info"] = kosong;
+    hasil m;
+}
+
+fungsi baru_business_catalog_page() {
+    buat m = peta_baru();
+    m["next"] = ""; m["previous"] = ""; m["products"] = [];
+    hasil m;
+}
+
+fungsi baru_business_merchant_contact() {
+    buat m = peta_baru();
+    m["email"] = ""; m["landline_number"] = ""; m["mobile_number"] = "";
+    hasil m;
+}
+
+fungsi baru_business_merchant_officer() {
+    buat m = peta_baru();
+    m["name"] = ""; m["email"] = ""; m["landline_number"] = ""; m["mobile_number"] = "";
+    hasil m;
+}
+
+fungsi baru_business_merchant_compliance() {
+    buat m = peta_baru();
+    m["entity_name"] = ""; m["entity_type"] = ""; m["is_registered"] = salah;
+    m["entity_type_custom"] = ""; m["customer_care_details"] = baru_business_merchant_contact();
+    m["grievance_officer_details"] = baru_business_merchant_officer();
+    hasil m;
+}
+
+fungsi baru_business_collection_status() {
+    buat m = peta_baru();
+    m["status"] = ""; m["can_appeal"] = salah; m["commerce_url"] = ""; m["reject_reason"] = "";
+    hasil m;
+}
+
+fungsi baru_business_collection() {
+    buat m = peta_baru();
+    m["id"] = ""; m["name"] = ""; m["next"] = ""; m["previous"] = "";
+    m["products"] = []; m["status_info"] = baru_business_collection_status();
+    hasil m;
+}
+
+fungsi baru_business_collection_page() {
+    buat m = peta_baru();
+    m["next"] = ""; m["collections"] = [];
+    hasil m;
+}
+
+fungsi baru_business_collection_update() {
+    buat m = peta_baru();
+    m["name"] = kosong; m["add_product_ids"] = []; m["remove_product_ids"] = [];
+    hasil m;
+}
+
+fungsi baru_business_collection_mutation_result() {
+    buat m = peta_baru();
+    m["id"] = ""; m["review_status"] = "";
+    hasil m;
+}
+
+fungsi baru_business_collection_move() {
+    buat m = peta_baru();
+    m["collection_id"] = ""; m["from_index"] = 0; m["to_index"] = 0;
+    hasil m;
+}

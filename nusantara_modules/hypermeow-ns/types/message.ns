@@ -1,0 +1,85 @@
+
+buat JID = impor("jid.ns");
+
+buat ADDRESSING_MODE_PN = "pn";
+buat ADDRESSING_MODE_LID = "lid";
+
+buat EDIT_ATTRIBUTE_EMPTY = "";
+buat EDIT_ATTRIBUTE_MESSAGE_EDIT = "1";
+buat EDIT_ATTRIBUTE_PIN_IN_CHAT = "2";
+buat EDIT_ATTRIBUTE_ADMIN_EDIT = "3";
+buat EDIT_ATTRIBUTE_SENDER_REVOKE = "7";
+buat EDIT_ATTRIBUTE_ADMIN_REVOKE = "8";
+
+buat BOT_EDIT_TYPE_FIRST = "first";
+buat BOT_EDIT_TYPE_INNER = "inner";
+buat BOT_EDIT_TYPE_LAST = "last";
+
+fungsi baru_broadcast_recipient() {
+    buat m = peta_baru();
+    m["lid"] = kosong; m["pn"] = kosong;
+    hasil m;
+}
+
+fungsi baru_msg_bot_info() {
+    buat m = peta_baru();
+    m["edit_type"] = ""; m["edit_target_id"] = ""; m["edit_sender_timestamp_ms"] = 0;
+    hasil m;
+}
+
+fungsi baru_msg_meta_info() {
+    buat m = peta_baru();
+    m["target_id"] = ""; m["target_sender"] = kosong; m["target_chat"] = kosong;
+    m["deprecated_lid_session"] = kosong;
+    m["thread_message_id"] = ""; m["thread_message_sender_jid"] = kosong;
+    hasil m;
+}
+
+fungsi baru_message_source() {
+    buat m = peta_baru();
+    m["chat"] = kosong; m["sender"] = kosong; m["is_from_me"] = salah; m["is_group"] = salah;
+    m["addressing_mode"] = "";
+    m["sender_alt"] = kosong; m["recipient_alt"] = kosong;
+    m["broadcast_list_owner"] = kosong; m["broadcast_recipients"] = [];
+    hasil m;
+}
+
+fungsi _jid_sama_msg(a, b) {
+    jika a == kosong { hasil b == kosong; }
+    jika b == kosong { hasil salah; }
+    hasil a["user"] == b["user"] && a["server"] == b["server"] && a["device"] == b["device"] && a["agent"] == b["agent"];
+}
+
+fungsi message_source_is_incoming_broadcast(ms) {
+    buat owner_kosong = ms["broadcast_list_owner"] == kosong || panjang(ms["broadcast_list_owner"]["server"]) == 0;
+    jika (ms["is_from_me"] == salah || owner_kosong == salah) && JID.JidIsBroadcastList(ms["chat"]) {
+        hasil benar;
+    }
+    hasil salah;
+}
+
+fungsi message_source_string(ms) {
+    jika _jid_sama_msg(ms["sender"], ms["chat"]) == salah {
+        hasil JID.JidKeTeks(ms["sender"]) + " in " + JID.JidKeTeks(ms["chat"]);
+    }
+    hasil JID.JidKeTeks(ms["chat"]);
+}
+
+fungsi baru_device_sent_meta() {
+    buat m = peta_baru();
+    m["destination_jid"] = ""; m["phash"] = "";
+    hasil m;
+}
+
+fungsi baru_message_info() {
+    buat m = baru_message_source();
+    m["id"] = ""; m["server_id"] = 0; m["type"] = ""; m["push_name"] = "";
+    m["timestamp"] = 0; m["category"] = ""; m["multicast"] = salah; m["media_type"] = "";
+    m["edit"] = EDIT_ATTRIBUTE_EMPTY;
+    m["msg_bot_info"] = baru_msg_bot_info();
+    m["msg_meta_info"] = baru_msg_meta_info();
+    m["is_newsletter_status"] = salah;
+    m["verified_name"] = kosong;
+    m["device_sent_meta"] = kosong;
+    hasil m;
+}

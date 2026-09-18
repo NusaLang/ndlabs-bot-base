@@ -1,0 +1,176 @@
+buat RECEIPT_NACK_PARSING            = 487;
+buat RECEIPT_NACK_STANZA_ASING       = 488;
+buat RECEIPT_NACK_KELAS_ASING        = 489;
+buat RECEIPT_NACK_TIPE_ASING         = 490;
+buat RECEIPT_NACK_PROTOBUF_RUSAK     = 491;
+buat RECEIPT_NACK_HOSTED_COMPANION   = 493;
+buat RECEIPT_NACK_MSG_SECRET_HILANG  = 495;
+buat RECEIPT_NACK_SIGNAL_COUNTER_TUA = 496;
+buat RECEIPT_NACK_DIHAPUS_DI_PEER    = 499;
+buat RECEIPT_NACK_ERROR_TAK_TERTANGANI = 500;
+buat RECEIPT_NACK_ADMIN_REVOKE       = 550;
+buat RECEIPT_NACK_LID_GRUP           = 551;
+buat RECEIPT_NACK_DB_GAGAL           = 552;
+
+fungsi _receipt_node(tag, attrs, children) {
+    buat n = peta_baru();
+    n["tag"] = tag;
+    jika tipe(attrs) == "peta" { n["attrs"] = attrs; } lain { n["attrs"] = peta_baru(); }
+    jika tipe(children) == "larik" { n["children"] = children; } lain { n["children"] = []; }
+    n["content"] = kosong;
+    jika panjang(n["children"]) > 0 { n["ada_isi"] = benar; } lain { n["ada_isi"] = salah; }
+    hasil n;
+}
+
+fungsi _receipt_jid(usr, srv) {
+    buat j = peta_baru();
+    j["jid"] = benar; j["user"] = usr; j["server"] = srv; j["device"] = 0; j["agent"] = 0;
+    hasil j;
+}
+
+fungsi _receipt_anak(node, tag) {
+    jika tipe(node["children"]) != "larik" { hasil kosong; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        jika node["children"][i]["tag"] == tag { hasil node["children"][i]; }
+    }
+    hasil kosong;
+}
+
+fungsi _receipt_semua_anak(node, tag) {
+    buat out = [];
+    jika tipe(node["children"]) != "larik" { hasil out; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        jika node["children"][i]["tag"] == tag { tambah(out, node["children"][i]); }
+    }
+    hasil out;
+}
+
+fungsi receipt_urai(node) {
+    buat r = peta_baru();
+    buat na = node["attrs"];
+    jika tipe(na) != "peta" { lempar "receipt tanpa attrs"; }
+
+    r["chat"] = na["from"];
+    r["pengirim"] = na["participant"];
+    r["penerima"] = na["recipient"];
+    r["tipe"] = "";
+    jika tipe(na["type"]) == "teks" { r["tipe"] = na["type"]; }
+    r["waktu"] = 0;
+    jika tipe(na["t"]) == "teks" && panjang(na["t"]) > 0 { r["waktu"] = ke_angka(na["t"]); }
+    r["grup"] = salah;
+    jika tipe(na["from"]) == "peta" && na["from"]["server"] == "g.us" { r["grup"] = benar; }
+    r["berkelompok"] = salah;
+    r["ids"] = [];
+
+    jika r["grup"] && tipe(na["participant"]) != "peta" {
+        buat plist = _receipt_semua_anak(node, "participants");
+        jika panjang(plist) == 0 { lempar "receipt grup tanpa <participants>"; }
+        r["berkelompok"] = benar;
+        r["kelompok"] = [];
+        untuk (buat i = 0; i < panjang(plist); i = i + 1) {
+            tambah(r["kelompok"], receipt_urai_kelompok(r, plist[i]));
+        }
+        hasil r;
+    }
+
+    jika tipe(na["id"]) != "teks" || panjang(na["id"]) == 0 { lempar "receipt tanpa id"; }
+    r["ids"] = [na["id"]];
+
+    jika tipe(node["children"]) == "larik" && panjang(node["children"]) == 1 && node["children"][0]["tag"] == "list" {
+        buat isi = node["children"][0]["children"];
+        jika tipe(isi) == "larik" {
+            untuk (buat i = 0; i < panjang(isi); i = i + 1) {
+                jika isi[i]["tag"] != "item" { lanjut; }
+                jika tipe(isi[i]["attrs"]["id"]) == "teks" { tambah(r["ids"], isi[i]["attrs"]["id"]); }
+            }
+        }
+    }
+    hasil r;
+}
+
+fungsi receipt_urai_kelompok(base, node_participants) {
+    buat out = [];
+    buat kunci = node_participants["attrs"]["key"];
+    jika tipe(node_participants["children"]) != "larik" { hasil out; }
+    untuk (buat i = 0; i < panjang(node_participants["children"]); i = i + 1) {
+        buat c = node_participants["children"][i];
+        jika c["tag"] != "user" { lanjut; }
+        buat e = peta_baru();
+        e["chat"] = base["chat"];
+        e["tipe"] = base["tipe"];
+        e["grup"] = benar;
+        e["ids"] = [kunci];
+        e["pengirim"] = c["attrs"]["jid"];
+        e["waktu"] = 0;
+        jika tipe(c["attrs"]["t"]) == "teks" && panjang(c["attrs"]["t"]) > 0 { e["waktu"] = ke_angka(c["attrs"]["t"]); }
+        tambah(out, e);
+    }
+    hasil out;
+}
+
+fungsi receipt_buat_base(msg_id, node) {
+    buat attrs = peta_baru();
+    attrs["id"] = msg_id;
+    attrs["to"] = node["attrs"]["from"];
+    jika tipe(node["attrs"]["recipient"]) == "peta" { attrs["recipient"] = node["attrs"]["recipient"]; }
+    jika tipe(node["attrs"]["participant"]) == "peta" { attrs["participant"] = node["attrs"]["participant"]; }
+    hasil attrs;
+}
+
+fungsi receipt_buat_node_ack(node, kode_error) {
+    buat na = node["attrs"];
+    jika tipe(na) != "peta" { lempar "node tanpa attrs, gak bisa di-ack"; }
+    buat attrs = peta_baru();
+    attrs["class"] = node["tag"];
+    attrs["id"] = na["id"];
+    attrs["to"] = na["from"];
+    jika tipe(na["participant"]) == "peta" { attrs["participant"] = na["participant"]; }
+    jika tipe(na["recipient"]) == "peta" { attrs["recipient"] = na["recipient"]; }
+    jika node["tag"] != "message" && tipe(na["type"]) == "teks" && panjang(na["type"]) > 0 { attrs["type"] = na["type"]; }
+    jika tipe(kode_error) == "angka" && kode_error != 0 { attrs["error"] = kode_error; }
+    hasil _receipt_node("ack", attrs, []);
+}
+
+fungsi receipt_buat_node_pesan(msg_id, node, dari_saya, TipePesan, kirim_aktif) {
+    buat attrs = receipt_buat_base(msg_id, node);
+    jika dari_saya == benar {
+        attrs["type"] = "sender";
+        jika TipePesan == "peer_msg" { attrs["type"] = "peer_msg"; }
+    } lain jika kirim_aktif != benar {
+        attrs["type"] = "inactive";
+    }
+    hasil _receipt_node("receipt", attrs, []);
+}
+
+fungsi receipt_buat_node_baca(ids, waktu_baca, chat_jid, sender_jid, tipe_receipt, baca_sendiri) {
+    jika tipe(ids) != "larik" || panjang(ids) == 0 { lempar "gak ada id pesan buat ditandai baca"; }
+    buat tipe_pakai = tipe_receipt;
+    jika tipe(tipe_pakai) != "teks" || panjang(tipe_pakai) == 0 { tipe_pakai = "read"; }
+    jika baca_sendiri == benar && tipe_pakai == "read" { tipe_pakai = "read-self"; }
+
+    buat attrs = peta_baru();
+    attrs["id"] = ids[0];
+    attrs["type"] = tipe_pakai;
+    attrs["to"] = chat_jid;
+    attrs["t"] = waktu_baca;
+
+    jika tipe(sender_jid) == "peta" && tipe(chat_jid) == "peta" {
+        buat srv = chat_jid["server"];
+        jika srv != "s.whatsapp.net" && srv != "lid" && srv != "msgr" {
+            buat p = _receipt_jid(sender_jid["user"], sender_jid["server"]);
+            attrs["participant"] = p;
+        }
+    }
+
+    buat anak = [];
+    jika panjang(ids) > 1 {
+        buat item = [];
+        untuk (buat i = 1; i < panjang(ids); i = i + 1) {
+            buat ia = peta_baru();
+            ia["id"] = ids[i];
+            tambah(item, _receipt_node("item", ia, []));
+        }
+        tambah(anak, _receipt_node("list", peta_baru(), item));
+    }
+    hasil _receipt_node("receipt", attrs, anak);
+}

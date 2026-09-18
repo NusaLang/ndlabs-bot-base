@@ -1,0 +1,138 @@
+buat MR_HKDF = impor("util/hkdf.ns");
+buat MR_GCM  = impor("util/gcm.ns");
+buat MR_PB   = impor("proto/pb.ns");
+buat MR_CP   = muat_plugin("crypto");
+
+buat MEDIARETRY_INFO = "WhatsApp Media Retry Notification";
+
+buat MEDIARETRY_HASIL_ERROR_UMUM = 0;
+buat MEDIARETRY_HASIL_SUKSES     = 1;
+buat MEDIARETRY_HASIL_TIDAK_ADA  = 2;
+buat MEDIARETRY_HASIL_DEKRIPSI_GAGAL = 3;
+
+fungsi _mediaretry_node(tag, attrs, children, content) {
+    buat n = peta_baru();
+    n["tag"] = tag;
+    jika tipe(attrs) == "peta" { n["attrs"] = attrs; } lain { n["attrs"] = peta_baru(); }
+    jika tipe(children) == "larik" { n["children"] = children; } lain { n["children"] = []; }
+    jika tipe(content) == "teks" { n["content"] = content; n["ada_isi"] = benar; }
+    lain jika panjang(n["children"]) > 0 { n["content"] = kosong; n["ada_isi"] = benar; }
+    lain { n["content"] = kosong; n["ada_isi"] = salah; }
+    hasil n;
+}
+
+fungsi _mediaretry_anak(node, tag) {
+    jika tipe(node["children"]) != "larik" { hasil kosong; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        jika node["children"][i]["tag"] == tag { hasil node["children"][i]; }
+    }
+    hasil kosong;
+}
+
+fungsi mediaretry_kunci(media_key) {
+    hasil MR_HKDF.HkdfSha256(media_key, "", MEDIARETRY_INFO, 32);
+}
+
+fungsi mediaretry_enkripsi_receipt(msg_id, media_key) {
+    buat plaintext = MR_PB.PbBytes(1, msg_id);
+    buat iv = MR_CP["hex_decode"](MR_CP["acak_bytes_hex"](12));
+    buat e = MR_GCM.GcmEnkripsi(mediaretry_kunci(media_key), iv, plaintext, msg_id);
+    buat r = peta_baru();
+    r["ciphertext"] = e["ct"] + e["tag"];
+    r["iv"] = iv;
+    hasil r;
+}
+
+fungsi mediaretry_buat_node_receipt(msg_id, jid_kita, chat_jid, dari_saya, pengirim_jid, media_key) {
+    jika tipe(jid_kita) != "peta" { lempar "belum login: jid sendiri gak ada"; }
+    buat enc = mediaretry_enkripsi_receipt(msg_id, media_key);
+
+    buat rmr_attrs = peta_baru();
+    rmr_attrs["jid"] = chat_jid;
+    jika dari_saya == benar { rmr_attrs["from_me"] = "true"; } lain { rmr_attrs["from_me"] = "false"; }
+    jika tipe(chat_jid) == "peta" && chat_jid["server"] == "g.us" && tipe(pengirim_jid) == "peta" {
+        rmr_attrs["participant"] = pengirim_jid;
+    }
+
+    buat enc_anak = [
+        _mediaretry_node("enc_p", peta_baru(), [], enc["ciphertext"]),
+        _mediaretry_node("enc_iv", peta_baru(), [], enc["iv"])
+    ];
+
+    buat attrs = peta_baru();
+    attrs["id"] = msg_id;
+    attrs["to"] = jid_kita;
+    attrs["type"] = "server-error";
+
+    buat isi = [
+        _mediaretry_node("encrypt", peta_baru(), enc_anak, kosong),
+        _mediaretry_node("rmr", rmr_attrs, [], kosong)
+    ];
+    hasil _mediaretry_node("receipt", attrs, isi, kosong);
+}
+
+fungsi mediaretry_urai_notifikasi(node) {
+    buat r = peta_baru();
+    buat na = node["attrs"];
+    jika tipe(na) != "peta" { lempar "notifikasi media retry tanpa attrs"; }
+    r["waktu"] = 0;
+    jika tipe(na["t"]) == "teks" && panjang(na["t"]) > 0 { r["waktu"] = ke_angka(na["t"]); }
+    jika tipe(na["id"]) != "teks" { lempar "notifikasi media retry tanpa id"; }
+    r["msg_id"] = na["id"];
+
+    buat rmr = _mediaretry_anak(node, "rmr");
+    jika tipe(rmr) != "peta" { lempar "notifikasi media retry tanpa <rmr>"; }
+    r["chat"] = rmr["attrs"]["jid"];
+    r["dari_saya"] = (rmr["attrs"]["from_me"] == "true" || rmr["attrs"]["from_me"] == benar);
+    r["pengirim"] = rmr["attrs"]["participant"];
+
+    buat n_err = _mediaretry_anak(node, "error");
+    jika tipe(n_err) == "peta" {
+        r["ada_error"] = benar;
+        r["kode_error"] = 0;
+        jika tipe(n_err["attrs"]["code"]) == "teks" { r["kode_error"] = ke_angka(n_err["attrs"]["code"]); }
+        hasil r;
+    }
+    r["ada_error"] = salah;
+
+    buat n_enc = _mediaretry_anak(node, "encrypt");
+    jika tipe(n_enc) != "peta" { lempar "notifikasi media retry tanpa <encrypt>"; }
+    buat n_p = _mediaretry_anak(n_enc, "enc_p");
+    buat n_iv = _mediaretry_anak(n_enc, "enc_iv");
+    jika tipe(n_p) != "peta" { lempar "notifikasi media retry tanpa <enc_p>"; }
+    jika tipe(n_iv) != "peta" { lempar "notifikasi media retry tanpa <enc_iv>"; }
+    r["ciphertext"] = n_p["content"];
+    r["iv"] = n_iv["content"];
+    hasil r;
+}
+
+fungsi mediaretry_dekripsi_notifikasi(evt, media_key) {
+    jika evt["ada_error"] == benar {
+        jika evt["kode_error"] == 2 { lempar "media udah gak ada di HP pengirim"; }
+        lempar "media retry gagal (kode " + ke_teks(evt["kode_error"]) + ")";
+    }
+    buat ct_full = evt["ciphertext"];
+    jika tipe(ct_full) != "teks" || panjang(ct_full) < 17 { lempar "ciphertext media retry gak valid"; }
+    buat batas = panjang(ct_full) - 16;
+    buat ct = potong(ct_full, 0, batas);
+    buat tag = potong(ct_full, batas, panjang(ct_full));
+
+    buat plain = MR_GCM.GcmDekripsi(mediaretry_kunci(media_key), evt["iv"], ct, evt["msg_id"], tag);
+    buat f = MR_PB.PbDekode(plain);
+
+    buat r = peta_baru();
+    r["msg_id"] = f["1"];
+    r["direct_path"] = f["2"];
+    r["hasil"] = MEDIARETRY_HASIL_ERROR_UMUM;
+    jika tipe(f["3"]) == "angka" { r["hasil"] = f["3"]; }
+    r["sukses"] = (r["hasil"] == MEDIARETRY_HASIL_SUKSES);
+    r["message_secret"] = f["4"];
+    hasil r;
+}
+
+fungsi mediaretry_hasil_ke_teks(kode) {
+    jika kode == MEDIARETRY_HASIL_SUKSES { hasil "sukses"; }
+    jika kode == MEDIARETRY_HASIL_TIDAK_ADA { hasil "media gak ketemu"; }
+    jika kode == MEDIARETRY_HASIL_DEKRIPSI_GAGAL { hasil "dekripsi gagal di HP"; }
+    hasil "error umum";
+}

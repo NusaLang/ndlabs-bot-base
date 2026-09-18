@@ -1,0 +1,156 @@
+
+buat CP = muat_plugin("crypto");
+
+fungsi _pb_varint(data, idx) {
+    buat r = peta_baru();
+    buat val = 0; buat shift = 1; buat i = idx;
+    selama (benar) {
+        jika i >= panjang(data) { lempar "unexpected EOF saat baca varint"; }
+        buat b = byte_di(data, i);
+        val = val + (b % 128) * shift;
+        i = i + 1;
+        jika b < 128 { berhenti; }
+        shift = shift * 128;
+    }
+    r["val"] = val; r["idx"] = i;
+    hasil r;
+}
+
+fungsi _pb_baca_field(data, idx) {
+    buat tg = _pb_varint(data, idx);
+    buat tag = tg["val"];
+    buat wire = tag % 8;
+    buat field_num = (tag - wire) / 8;
+    buat r = peta_baru();
+    r["field"] = field_num;
+    jika wire == 0 {
+        buat v = _pb_varint(data, tg["idx"]);
+        r["wire"] = "varint"; r["val"] = v["val"]; r["idx"] = v["idx"];
+        hasil r;
+    }
+    jika wire == 2 {
+        buat ln = _pb_varint(data, tg["idx"]);
+        buat mulai = ln["idx"];
+        buat akhir = mulai + ln["val"];
+        jika akhir > panjang(data) { lempar "unexpected EOF saat baca bytes protobuf"; }
+        r["wire"] = "bytes"; r["val"] = potong(data, mulai, akhir); r["idx"] = akhir;
+        hasil r;
+    }
+    jika wire == 5 { r["wire"] = "fixed32"; r["val"] = potong(data, tg["idx"], tg["idx"] + 4); r["idx"] = tg["idx"] + 4; hasil r; }
+    jika wire == 1 { r["wire"] = "fixed64"; r["val"] = potong(data, tg["idx"], tg["idx"] + 8); r["idx"] = tg["idx"] + 8; hasil r; }
+    lempar "wire type protobuf tak didukung: " + ke_teks(wire);
+}
+
+fungsi pb_urai_pesan(data) {
+    buat fields = peta_baru();
+    buat idx = 0;
+    selama (idx < panjang(data)) {
+        buat f = _pb_baca_field(data, idx);
+        buat key = ke_teks(f["field"]);
+        jika tipe(fields[key]) != "larik" { fields[key] = []; }
+        tambah(fields[key], f);
+        idx = f["idx"];
+    }
+    hasil fields;
+}
+
+fungsi _ambil_terakhir(fields, no) {
+    buat key = ke_teks(no);
+    jika tipe(fields[key]) != "larik" { hasil kosong; }
+    buat arr = fields[key];
+    jika panjang(arr) == 0 { hasil kosong; }
+    hasil arr[panjang(arr) - 1]["val"];
+}
+
+fungsi _ambil_semua(fields, no) {
+    buat key = ke_teks(no);
+    jika tipe(fields[key]) != "larik" { hasil []; }
+    buat out = [];
+    buat arr = fields[key];
+    untuk (buat i = 0; i < panjang(arr); i = i + 1) { tambah(out, arr[i]["val"]); }
+    hasil out;
+}
+
+fungsi urai_syncd_snapshot_recovery(data) {
+    buat top = pb_urai_pesan(data);
+    buat r = peta_baru();
+    buat versi_bytes = _ambil_terakhir(top, 1);
+    r["version"] = 0;
+    jika versi_bytes != kosong {
+        buat vfields = pb_urai_pesan(versi_bytes);
+        buat v = _ambil_terakhir(vfields, 1);
+        jika v != kosong { r["version"] = v; }
+    }
+    buat nama_bytes = _ambil_terakhir(top, 2);
+    jika nama_bytes == kosong { r["collection_name"] = ""; } lain { r["collection_name"] = nama_bytes; }
+    buat lthash = _ambil_terakhir(top, 4);
+    jika lthash == kosong { r["collection_lthash"] = ""; } lain { r["collection_lthash"] = lthash; }
+    buat rekaman = [];
+    buat rec_bytes = _ambil_semua(top, 3);
+    untuk (buat i = 0; i < panjang(rec_bytes); i = i + 1) {
+        buat rf = pb_urai_pesan(rec_bytes[i]);
+        buat rec = peta_baru();
+        rec["key_id"] = _ambil_terakhir(rf, 2);
+        jika rec["key_id"] == kosong { rec["key_id"] = ""; }
+        rec["mac"] = _ambil_terakhir(rf, 3);
+        jika rec["mac"] == kosong { rec["mac"] = ""; }
+        buat val_bytes = _ambil_terakhir(rf, 1);
+        buat val = peta_baru();
+        val["index"] = ""; val["action_value"] = ""; val["version"] = 0;
+        jika val_bytes != kosong {
+            buat vf = pb_urai_pesan(val_bytes);
+            buat idx_b = _ambil_terakhir(vf, 1);
+            jika idx_b != kosong { val["index"] = idx_b; }
+            buat av_b = _ambil_terakhir(vf, 2);
+            jika av_b != kosong { val["action_value"] = av_b; }
+            buat ver_v = _ambil_terakhir(vf, 4);
+            jika ver_v != kosong { val["version"] = ver_v; }
+        }
+        rec["value"] = val;
+        tambah(rekaman, rec);
+    }
+    r["mutation_records"] = rekaman;
+    hasil r;
+}
+
+fungsi parse_recovery(collection_snapshot, is_compressed) {
+    buat data = collection_snapshot;
+    jika is_compressed {
+        buat r = jalankan_perintah("nusantara_modules/hypermeow-ns/tools/zlib_inflate", [CP["hex_encode"](data)]);
+        jika r["status"] != 0 { lempar "gagal decompress collection snapshot: " + r["error"]; }
+        data = CP["hex_decode"](r["keluaran"]);
+    }
+    hasil urai_syncd_snapshot_recovery(data);
+}
+
+fungsi generate_content_mac_index(index_bin, index_key) {
+    hasil CP["hex_decode"](potong(hmac_sha256_hex(index_key, index_bin), 0, 64));
+}
+
+fungsi proses_recovery(recovery, get_app_state_key) {
+    jika panjang(recovery["collection_lthash"]) != 128 {
+        lempar "panjang lthash tidak valid: " + ke_teks(panjang(recovery["collection_lthash"]));
+    }
+    buat nama = recovery["collection_name"];
+    buat versi = recovery["version"];
+    buat mutations = [];
+    buat records = recovery["mutation_records"];
+    untuk (buat i = 0; i < panjang(records); i = i + 1) {
+        buat rec = records[i];
+        buat keys = get_app_state_key(rec["key_id"]);
+        jika keys == kosong { lempar "gagal ambil key untuk mutasi #" + ke_teks(i + 1); }
+        buat index_mac = generate_content_mac_index(rec["value"]["index"], keys["index"]);
+        buat mut = peta_baru();
+        mut["key_id"] = rec["key_id"];
+        mut["operation"] = "SET";
+        mut["action"] = rec["value"]["action_value"];
+        mut["version"] = rec["value"]["version"];
+        mut["index_mac"] = index_mac;
+        mut["value_mac"] = rec["mac"];
+        mut["patch_version"] = versi;
+        tambah(mutations, mut);
+    }
+    buat r = peta_baru();
+    r["name"] = nama; r["version"] = versi; r["mutations"] = mutations;
+    hasil r;
+}

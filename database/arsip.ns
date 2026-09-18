@@ -1,0 +1,57 @@
+buat SQL = muat_plugin("sqlite");
+buat handle_db = 0;
+
+fungsi Init(db_path) {
+    handle_db = SQL["db_buka"](db_path);
+    jika handle_db != 0 {
+        SQL["db_jalankan"](handle_db, "CREATE TABLE IF NOT EXISTS arsip (msg_id TEXT PRIMARY KEY, chat TEXT, sender TEXT, tipe TEXT, mimetype TEXT, caption TEXT, body TEXT, path_file TEXT, dibungkus INTEGER, ts INTEGER);");
+        hasil benar;
+    }
+    hasil salah;
+}
+
+fungsi SimpanArsip(msg_id, chat, sender, tipe_media, mimetype, caption, body, path_file, dibungkus) {
+    jika handle_db == 0 || tipe(msg_id) != "teks" || panjang(msg_id) == 0 { hasil salah; }
+    buat db = 0;
+    jika dibungkus { db = 1; }
+    buat res = json_decode(SQL["db_jalankan"](handle_db,
+        "INSERT INTO arsip (msg_id, chat, sender, tipe, mimetype, caption, body, path_file, dibungkus, ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(msg_id) DO NOTHING;",
+        json_encode([msg_id, chat, sender, tipe_media, mimetype, caption, body, path_file, db, waktu()])));
+    hasil res["ok"] == benar;
+}
+
+fungsi SudahDiarsip(msg_id) {
+    jika handle_db == 0 || tipe(msg_id) != "teks" || panjang(msg_id) == 0 { hasil salah; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT msg_id FROM arsip WHERE msg_id = ?;", json_encode([msg_id])));
+    hasil res["ok"] && panjang(res["rows"]) > 0;
+}
+
+fungsi HitungArsip(chat) {
+    jika handle_db == 0 { hasil 0; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT COUNT(*) as n FROM arsip WHERE chat = ?;", json_encode([chat])));
+    jika res["ok"] && panjang(res["rows"]) > 0 { hasil res["rows"][0]["n"]; }
+    hasil 0;
+}
+
+fungsi AmbilArsipList(chat, batas, offset) {
+    jika handle_db == 0 { hasil []; }
+    buat res = json_decode(SQL["db_query"](handle_db,
+        "SELECT rowid as no, msg_id, sender, tipe, mimetype, caption, body, dibungkus, ts FROM arsip WHERE chat = ? ORDER BY ts DESC LIMIT ? OFFSET ?;",
+        json_encode([chat, batas, offset])));
+    jika res["ok"] { hasil res["rows"]; }
+    hasil [];
+}
+
+fungsi AmbilArsipByNo(no) {
+    jika handle_db == 0 { hasil kosong; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT rowid as no, * FROM arsip WHERE rowid = ?;", json_encode([no])));
+    jika res["ok"] && panjang(res["rows"]) > 0 { hasil res["rows"][0]; }
+    hasil kosong;
+}
+
+fungsi AmbilArsipSatu(msg_id) {
+    jika handle_db == 0 { hasil kosong; }
+    buat res = json_decode(SQL["db_query"](handle_db, "SELECT rowid as no, * FROM arsip WHERE msg_id = ?;", json_encode([msg_id])));
+    jika res["ok"] && panjang(res["rows"]) > 0 { hasil res["rows"][0]; }
+    hasil kosong;
+}

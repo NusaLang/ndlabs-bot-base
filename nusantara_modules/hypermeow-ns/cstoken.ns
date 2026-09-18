@@ -1,0 +1,39 @@
+buat JID = impor("types/jid.ns");
+buat CP  = muat_plugin("crypto");
+
+fungsi cstoken_perlu_kirim(j) {
+    buat n = JID.JidToNonAd(j);
+    jika n["server"] != JID.SRV_DEF && n["server"] != JID.SRV_LID { hasil salah; }
+    jika n["server"] == JID.SRV_DEF && n["user"] == "0" { hasil salah; }
+    jika JID.JidIsBot(n) { hasil salah; }
+    hasil benar;
+}
+
+fungsi cstoken_hasilkan(salt, j, lid_untuk_pn) {
+    jika cstoken_perlu_kirim(j) == salah { hasil kosong; }
+    jika tipe(salt) != "teks" || panjang(salt) == 0 { hasil kosong; }
+
+    buat penerima = kosong;
+    buat n = JID.JidToNonAd(j);
+    jika n["server"] == JID.SRV_LID {
+        penerima = n;
+    } lain jika n["server"] == JID.SRV_DEF {
+        jika tipe(lid_untuk_pn) != "peta" { hasil kosong; }
+        jika JID.JidKosong(lid_untuk_pn) { hasil kosong; }
+        penerima = JID.JidToNonAd(lid_untuk_pn);
+    } lain {
+        hasil kosong;
+    }
+
+    jika penerima["server"] != JID.SRV_LID { hasil kosong; }
+    hasil CP["hex_decode"](potong(hmac_sha256_hex(salt, JID.JidKeTeks(penerima)), 0, 64));
+}
+
+fungsi cstoken_simpan_salt(salt_lama, salt_baru) {
+    jika tipe(salt_baru) != "teks" || panjang(salt_baru) == 0 { hasil salt_lama; }
+    hasil salt_baru;
+}
+
+fungsi cstoken_bersihkan_salt() {
+    hasil kosong;
+}

@@ -1,0 +1,36 @@
+
+fungsi baru_manager() {
+    buat m = peta_baru();
+    m["plugins"] = peta_baru();
+    m["commands"] = peta_baru();
+
+    m["Register"] = fungsi(p) {
+        buat name = p["GetName"]();
+        m["plugins"][name] = p;
+        buat cmds = p["GetCommands"]();
+        untuk (buat i = 0; i < panjang(cmds); i = i + 1) {
+            m["commands"][cmds[i]] = p;
+        }
+    };
+
+    m["GetAll"] = fungsi() {
+        buat list = [];
+        buat keys = peta_kunci(m["plugins"]);
+        untuk (buat i = 0; i < panjang(keys); i = i + 1) {
+            tambah(list, m["plugins"][keys[i]]);
+        }
+        hasil list;
+    };
+
+    m["GetCommand"] = fungsi(cmd_name) {
+        buat keys = peta_kunci(m["commands"]);
+        untuk (buat i = 0; i < panjang(keys); i = i + 1) {
+            jika keys[i] == cmd_name {
+                hasil m["commands"][cmd_name];
+            }
+        }
+        hasil kosong;
+    };
+
+    hasil m;
+}

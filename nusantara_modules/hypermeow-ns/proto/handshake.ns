@@ -1,0 +1,45 @@
+
+buat PB = impor("pb.ns");
+
+fungsi EnkodeClientHello(ephemeral_pub) {
+    buat ch_fields = [
+        PB.PbBytes(1, ephemeral_pub)
+    ];
+    buat hm_fields = [
+        PB.PbPesan(2, ch_fields)
+    ];
+    hasil PB.PbEnkode(hm_fields);
+}
+
+fungsi DekodeServerHello(bin_data) {
+    buat hm = PB.PbDekode(bin_data);
+    jika tipe(hm["3"]) != "teks" {
+        buat empty = peta_baru();
+        empty["ephemeral"] = "";
+        empty["static"] = "";
+        empty["payload"] = "";
+        hasil empty;
+    }
+    buat sh = PB.PbDekode(hm["3"]);
+    buat res = peta_baru();
+    res["ephemeral"] = "";
+    res["static"] = "";
+    res["payload"] = "";
+    jika tipe(sh["1"]) == "teks" { res["ephemeral"] = sh["1"]; }
+    jika tipe(sh["2"]) == "teks" { res["static"] = sh["2"]; }
+    jika tipe(sh["3"]) == "teks" { res["payload"] = sh["3"]; }
+    hasil res;
+}
+
+fungsi EnkodeClientFinish(enc_static_pub, enc_payload) {
+    buat cf_fields = [
+        PB.PbBytes(1, enc_static_pub)
+    ];
+    jika panjang(enc_payload) > 0 {
+        tambah(cf_fields, PB.PbBytes(2, enc_payload));
+    }
+    buat hm_fields = [
+        PB.PbPesan(4, cf_fields)
+    ];
+    hasil PB.PbEnkode(hm_fields);
+}

@@ -1,0 +1,184 @@
+buat PB = impor("proto/pb.ns");
+buat MS = impor("msgsecret.ns");
+buat CP = muat_plugin("crypto");
+
+buat REPTOKEN_TIPE_RAHASIA = "Report Token";
+
+buat REPTOKEN_WIRE_VARINT = 0;
+buat REPTOKEN_WIRE_64BIT  = 1;
+buat REPTOKEN_WIRE_BYTES  = 2;
+buat REPTOKEN_WIRE_32BIT  = 5;
+
+buat REPTOKEN_FIELDS_JSON = "[{\"f\":1},{\"f\":3,\"s\":[{\"f\":2},{\"f\":3},{\"f\":8},{\"f\":11},{\"f\":17,\"s\":[{\"f\":21},{\"f\":22}]},{\"f\":25}]},{\"f\":4,\"s\":[{\"f\":1},{\"f\":16},{\"f\":17,\"s\":[{\"f\":21},{\"f\":22}]}]},{\"f\":5,\"s\":[{\"f\":3},{\"f\":4},{\"f\":5},{\"f\":16},{\"f\":17,\"s\":[{\"f\":21},{\"f\":22}]}]},{\"f\":6,\"s\":[{\"f\":1},{\"f\":17,\"s\":[{\"f\":21},{\"f\":22}]},{\"f\":30}]},{\"f\":7,\"s\":[{\"f\":2},{\"f\":7},{\"f\":10},{\"f\":17,\"s\":[{\"f\":21},{\"f\":22}]},{\"f\":20}]},{\"f\":8,\"s\":[{\"f\":2},{\"f\":7},{\"f\":9},{\"f\":17,\"s\":[{\"f\":21},{\"f\":22}]},{\"f\":21}]},{\"f\":9,\"s\":[{\"f\":2},{\"f\":6},{\"f\":7},{\"f\":13},{\"f\":17,\"s\":[{\"f\":21},{\"f\":22}]},{\"f\":20}]},{\"f\":12,\"s\":[{\"f\":1},{\"f\":2},{\"f\":14,\"m\":true},{\"f\":15}]},{\"f\":18,\"s\":[{\"f\":6},{\"f\":16},{\"f\":17,\"s\":[{\"f\":21},{\"f\":22}]}]},{\"f\":26,\"s\":[{\"f\":4},{\"f\":5},{\"f\":8},{\"f\":13},{\"f\":17,\"s\":[{\"f\":21},{\"f\":22}]}]},{\"f\":28,\"s\":[{\"f\":1},{\"f\":2},{\"f\":4},{\"f\":5},{\"f\":6},{\"f\":7,\"s\":[{\"f\":21},{\"f\":22}]}]},{\"f\":37,\"s\":[{\"f\":1,\"m\":true}]},{\"f\":49,\"s\":[{\"f\":2},{\"f\":3,\"s\":[{\"f\":1},{\"f\":2}]},{\"f\":5,\"s\":[{\"f\":21},{\"f\":22}]},{\"f\":8,\"s\":[{\"f\":1},{\"f\":2}]}]},{\"f\":53,\"s\":[{\"f\":1,\"m\":true}]},{\"f\":55,\"s\":[{\"f\":1,\"m\":true}]},{\"f\":58,\"s\":[{\"f\":1,\"m\":true}]},{\"f\":59,\"s\":[{\"f\":1,\"m\":true}]},{\"f\":60,\"s\":[{\"f\":2},{\"f\":3,\"s\":[{\"f\":1},{\"f\":2}]},{\"f\":5,\"s\":[{\"f\":21},{\"f\":22}]},{\"f\":8,\"s\":[{\"f\":1},{\"f\":2}]}]},{\"f\":64,\"s\":[{\"f\":2},{\"f\":3,\"s\":[{\"f\":1},{\"f\":2}]},{\"f\":5,\"s\":[{\"f\":21},{\"f\":22}]},{\"f\":8,\"s\":[{\"f\":1},{\"f\":2}]}]},{\"f\":66,\"s\":[{\"f\":2},{\"f\":6},{\"f\":7},{\"f\":13},{\"f\":17,\"s\":[{\"f\":21},{\"f\":22}]},{\"f\":20}]},{\"f\":74,\"s\":[{\"f\":1,\"m\":true}]},{\"f\":87,\"s\":[{\"f\":1,\"m\":true}]},{\"f\":88,\"s\":[{\"f\":1},{\"f\":2,\"s\":[{\"f\":1}]},{\"f\":3,\"s\":[{\"f\":21},{\"f\":22}]}]},{\"f\":92,\"s\":[{\"f\":1,\"m\":true}]},{\"f\":93,\"s\":[{\"f\":1,\"m\":true}]},{\"f\":94,\"s\":[{\"f\":1,\"m\":true}]}]";
+
+buat _reptoken_fields = kosong;
+
+fungsi reptoken_fields() {
+    jika tipe(_reptoken_fields) != "larik" {
+        _reptoken_fields = json_decode(REPTOKEN_FIELDS_JSON);
+    }
+    hasil _reptoken_fields;
+}
+
+fungsi _reptoken_varint(data, pos) {
+    buat val = 0;
+    buat shift = 1;
+    buat n = 0;
+    selama pos + n < panjang(data) {
+        buat b = byte_di(data, pos + n);
+        n = n + 1;
+        val = val + (b % 128) * shift;
+        jika b < 128 {
+            buat r = peta_baru();
+            r["val"] = val;
+            r["len"] = n;
+            hasil r;
+        }
+        shift = shift * 128;
+        jika n >= 10 { berhenti; }
+    }
+    buat bad = peta_baru();
+    bad["val"] = 0;
+    bad["len"] = 0;
+    hasil bad;
+}
+
+fungsi _reptoken_config(config, nomor) {
+    jika tipe(config) != "larik" { hasil kosong; }
+    untuk (buat i = 0; i < panjang(config); i = i + 1) {
+        jika config[i]["f"] == nomor { hasil config[i]; }
+    }
+    hasil kosong;
+}
+
+fungsi _reptoken_urut_gabung(nomor_list, bytes_list) {
+    buat idx = [];
+    untuk (buat i = 0; i < panjang(nomor_list); i = i + 1) { tambah(idx, i); }
+    untuk (buat i = 1; i < panjang(idx); i = i + 1) {
+        buat cur = idx[i];
+        buat j = i - 1;
+        selama j >= 0 && nomor_list[idx[j]] > nomor_list[cur] {
+            idx[j + 1] = idx[j];
+            j = j - 1;
+        }
+        idx[j + 1] = cur;
+    }
+    buat out = "";
+    untuk (buat i = 0; i < panjang(idx); i = i + 1) { out = out + bytes_list[idx[i]]; }
+    hasil out;
+}
+
+fungsi reptoken_ekstrak(data, config) {
+    buat nomor_list = [];
+    buat bytes_list = [];
+    buat i = 0;
+    selama i < panjang(data) {
+        buat tag = _reptoken_varint(data, i);
+        jika tag["len"] <= 0 { berhenti; }
+        buat nomor = (tag["val"] - (tag["val"] % 8)) / 8;
+        buat wire = tag["val"] % 8;
+        buat cfg = _reptoken_config(config, nomor);
+        buat awal = i;
+        i = i + tag["len"];
+
+        jika tipe(cfg) != "peta" {
+            jika wire == REPTOKEN_WIRE_VARINT {
+                buat sv = _reptoken_varint(data, i);
+                i = i + sv["len"];
+            } lain jika wire == REPTOKEN_WIRE_64BIT {
+                i = i + 8;
+            } lain jika wire == REPTOKEN_WIRE_BYTES {
+                buat sl = _reptoken_varint(data, i);
+                i = i + sl["len"] + sl["val"];
+            } lain jika wire == REPTOKEN_WIRE_32BIT {
+                i = i + 4;
+            } lain {
+                hasil "";
+            }
+            lanjut;
+        }
+
+        jika wire == REPTOKEN_WIRE_VARINT {
+            buat v = _reptoken_varint(data, i);
+            i = i + v["len"];
+            tambah(nomor_list, nomor);
+            tambah(bytes_list, potong(data, awal, i));
+        } lain jika wire == REPTOKEN_WIRE_64BIT {
+            i = i + 8;
+            tambah(nomor_list, nomor);
+            tambah(bytes_list, potong(data, awal, i));
+        } lain jika wire == REPTOKEN_WIRE_BYTES {
+            buat l = _reptoken_varint(data, i);
+            buat mulai_nilai = i + l["len"];
+            buat akhir_nilai = mulai_nilai + l["val"];
+            buat sub_cfg = cfg["s"];
+            buat punya_sub = (cfg["m"] == benar) || (tipe(sub_cfg) == "larik" && panjang(sub_cfg) > 0);
+            jika punya_sub {
+                buat sub = reptoken_ekstrak(potong(data, mulai_nilai, akhir_nilai), sub_cfg);
+                jika panjang(sub) > 0 {
+                    tambah(nomor_list, nomor);
+                    tambah(bytes_list, PB.EnkodeVarint(tag["val"]) + PB.EnkodeVarint(panjang(sub)) + sub);
+                }
+            } lain {
+                tambah(nomor_list, nomor);
+                tambah(bytes_list, potong(data, awal, akhir_nilai));
+            }
+            i = akhir_nilai;
+        } lain jika wire == REPTOKEN_WIRE_32BIT {
+            i = i + 4;
+            tambah(nomor_list, nomor);
+            tambah(bytes_list, potong(data, awal, i));
+        } lain {
+            hasil "";
+        }
+    }
+    hasil _reptoken_urut_gabung(nomor_list, bytes_list);
+}
+
+fungsi reptoken_token(wire_pesan) {
+    hasil reptoken_ekstrak(wire_pesan, reptoken_fields());
+}
+
+fungsi reptoken_kunci_rahasia(jid_remote, msg_id, jid_pengirim, message_secret) {
+    buat k = MS.TurunkanKunciRahasia(REPTOKEN_TIPE_RAHASIA, jid_remote, msg_id, jid_pengirim, message_secret);
+    hasil k["kunci"];
+}
+
+fungsi reptoken_hash(rahasia, wire_pesan) {
+    buat penuh = CP["hex_decode"](potong(hmac_sha256_hex(rahasia, reptoken_token(wire_pesan)), 0, 64));
+    hasil potong(penuh, 0, 16);
+}
+
+fungsi reptoken_buat_node(rahasia, wire_pesan) {
+    buat ta = peta_baru();
+    ta["v"] = "2";
+
+    buat token = peta_baru();
+    token["tag"] = "reporting_token";
+    token["attrs"] = ta;
+    token["children"] = [];
+    token["content"] = reptoken_hash(rahasia, wire_pesan);
+    token["ada_isi"] = benar;
+
+    buat n = peta_baru();
+    n["tag"] = "reporting";
+    n["attrs"] = peta_baru();
+    n["children"] = [token];
+    n["content"] = kosong;
+    n["ada_isi"] = benar;
+    hasil n;
+}
+
+fungsi reptoken_buat_node_dari_pesan(jid_remote, msg_id, jid_pengirim, message_secret, wire_pesan) {
+    hasil reptoken_buat_node(reptoken_kunci_rahasia(jid_remote, msg_id, jid_pengirim, message_secret), wire_pesan);
+}
+
+fungsi reptoken_perlu_disertakan(kirim_token, fields_pesan) {
+    jika kirim_token != benar { hasil salah; }
+    jika tipe(fields_pesan) != "peta" { hasil benar; }
+    jika tipe(fields_pesan["46"]) == "teks" { hasil salah; }
+    jika tipe(fields_pesan["56"]) == "teks" { hasil salah; }
+    jika tipe(fields_pesan["76"]) == "teks" { hasil salah; }
+    jika tipe(fields_pesan["50"]) == "teks" { hasil salah; }
+    hasil benar;
+}

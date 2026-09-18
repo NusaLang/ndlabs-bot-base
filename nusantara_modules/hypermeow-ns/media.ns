@@ -1,0 +1,272 @@
+buat HKDF = impor("util/hkdf.ns");
+buat CBC  = impor("util/cbc.ns");
+buat CP   = muat_plugin("crypto");
+
+buat INFO_GAMBAR   = "WhatsApp Image Keys";
+buat INFO_VIDEO    = "WhatsApp Video Keys";
+buat INFO_AUDIO    = "WhatsApp Audio Keys";
+buat INFO_DOKUMEN  = "WhatsApp Document Keys";
+buat INFO_HISTORY  = "WhatsApp History Keys";
+buat INFO_APPSTATE = "WhatsApp App State Keys";
+buat INFO_LINK_THUMB = "WhatsApp Link Thumbnail Keys";
+
+fungsi _jid(usr, srv) {
+    buat j = peta_baru();
+    j["jid"] = benar; j["user"] = usr; j["server"] = srv; j["device"] = 0; j["agent"] = 0;
+    hasil j;
+}
+
+fungsi info_dari_tipe(tipe_media) {
+    jika tipe_media == "image"    { hasil INFO_GAMBAR; }
+    jika tipe_media == "video"    { hasil INFO_VIDEO; }
+    jika tipe_media == "audio"    { hasil INFO_AUDIO; }
+    jika tipe_media == "ptt"      { hasil INFO_AUDIO; }
+    jika tipe_media == "document" { hasil INFO_DOKUMEN; }
+    jika tipe_media == "sticker"  { hasil INFO_GAMBAR; }
+    jika tipe_media == "thumbnail-link" { hasil INFO_LINK_THUMB; }
+    lempar "tipe media gak dikenal: " + ke_teks(tipe_media);
+}
+
+fungsi mms_dari_tipe(tipe_media) {
+    jika tipe_media == "sticker" { hasil "image"; }
+    jika tipe_media == "ptt"     { hasil "ptt"; }
+    hasil tipe_media;
+}
+
+fungsi turunkan_kunci_media(media_key, app_info) {
+    buat d = HKDF.HkdfSha256(media_key, "", app_info, 112);
+    buat r = peta_baru();
+    r["iv"]         = potong(d, 0, 16);
+    r["cipher_key"] = potong(d, 16, 48);
+    r["mac_key"]    = potong(d, 48, 80);
+    r["ref_key"]    = potong(d, 80, 112);
+    hasil r;
+}
+
+fungsi base64_url(s) {
+    buat b = base64_encode(s);
+    buat out = "";
+    untuk (buat i = 0; i < panjang(b); i = i + 1) {
+        buat c = potong(b, i, i + 1);
+        jika c == "+" { out = out + "-"; }
+        lain jika c == "/" { out = out + "_"; }
+        lain { out = out + c; }
+    }
+    hasil out;
+}
+
+fungsi BuatNodeMediaConn(req_id) {
+    buat mc = peta_baru();
+    mc["tag"] = "media_conn"; mc["attrs"] = peta_baru(); mc["children"] = [];
+    mc["content"] = kosong; mc["ada_isi"] = salah;
+
+    buat a = peta_baru();
+    a["id"] = req_id; a["to"] = _jid("", "s.whatsapp.net"); a["type"] = "set"; a["xmlns"] = "w:m";
+
+    buat n = peta_baru();
+    n["tag"] = "iq"; n["attrs"] = a; n["children"] = [mc];
+    n["content"] = kosong; n["ada_isi"] = benar;
+    hasil n;
+}
+
+fungsi UraiMediaConn(node) {
+    buat r = peta_baru(); r["ok"] = salah; r["host"] = [];
+    jika tipe(node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        buat mc = node["children"][i];
+        jika mc["tag"] != "media_conn" { lanjut; }
+        r["auth"] = mc["attrs"]["auth"];
+        r["ttl"] = mc["attrs"]["ttl"];
+        jika tipe(mc["children"]) == "larik" {
+            untuk (buat j = 0; j < panjang(mc["children"]); j = j + 1) {
+                jika mc["children"][j]["tag"] == "host" {
+                    tambah(r["host"], mc["children"][j]["attrs"]["hostname"]);
+                }
+            }
+        }
+        r["ok"] = (panjang(r["host"]) > 0);
+        hasil r;
+    }
+    hasil r;
+}
+
+fungsi unduh_url(url, path_simpan) {
+    buat res = jalankan_perintah("curl", ["-sSL", "--fail",
+        "--connect-timeout", "15", "--max-time", "90",
+        "-o", path_simpan,
+        "-H", "Origin: https://web.whatsapp.com",
+        "-H", "Referer: https://web.whatsapp.com/",
+        "-H", "User-Agent: Mozilla/5.0", url]);
+    jika res["status"] != 0 { lempar "unduh gagal: " + ke_teks(res["error"]); }
+    hasil baca_file(path_simpan);
+}
+
+fungsi UnduhMediaByPath(host, direct_path, file_enc_sha256, media_key, app_info, mms_type, path_tmp) {
+    buat url = "https://" + host + direct_path + "&hash=" + base64_url(file_enc_sha256) + "&mms-type=" + mms_type + "&__wa-mms=";
+    buat enc = unduh_url(url, path_tmp);
+    hasil dekripsi_media(enc, media_key, app_info, kosong);
+}
+
+fungsi dekripsi_media(enc_bytes, media_key, app_info, file_sha256_hex) {
+    buat k = turunkan_kunci_media(media_key, app_info);
+    buat plain = CBC.MediaDekripsiStream(k["cipher_key"], k["iv"], k["mac_key"], enc_bytes);
+    jika tipe(file_sha256_hex) == "teks" && panjang(file_sha256_hex) == 64 {
+        jika potong(sha256_hex(plain), 0, 64) != file_sha256_hex {
+            lempar "SHA256 file hasil dekripsi gak cocok";
+        }
+    }
+    hasil plain;
+}
+
+fungsi UnduhMedia(url, media_key, tipe_media, file_sha256_hex, path_tmp) {
+    buat enc = unduh_url(url, path_tmp);
+    hasil dekripsi_media(enc, media_key, info_dari_tipe(tipe_media), file_sha256_hex);
+}
+
+fungsi dekripsi_media_wa(enc_bytes, media_key, app_info) {
+    hasil dekripsi_media(enc_bytes, media_key, app_info, kosong);
+}
+
+fungsi SiapkanUpload(plaintext, tipe_media) {
+    buat media_key = CP["hex_decode"](CP["acak_bytes_hex"](32));
+    buat k = turunkan_kunci_media(media_key, info_dari_tipe(tipe_media));
+    buat s = CBC.MediaEnkripsiStream(k["cipher_key"], k["iv"], k["mac_key"], plaintext);
+
+    buat r = peta_baru();
+    r["media_key"]       = media_key;
+    r["data"]            = s["data"];
+    r["file_sha256"]     = CP["hex_decode"](s["plain_sha256"]);
+    r["file_enc_sha256"] = CP["hex_decode"](s["cipher_sha256"]);
+    r["file_length"]     = s["size"];
+    hasil r;
+}
+
+fungsi UnggahMedia(siap, tipe_media, media_conn, path_tmp) {
+    jika tipe(media_conn) != "peta" || !media_conn["ok"] { lempar "media_conn belum siap"; }
+    tulis_file(path_tmp, siap["data"]);
+
+    buat token = base64_url(siap["file_enc_sha256"]);
+    buat mms = mms_dari_tipe(tipe_media);
+    buat url = "https://" + media_conn["host"][0] + "/mms/" + mms + "/" + token
+             + "?auth=" + media_conn["auth"] + "&token=" + token;
+
+    buat res = jalankan_perintah("curl", ["-sS", "--fail", "-X", "POST",
+        "--connect-timeout", "15", "--max-time", "90",
+        "-H", "Origin: https://web.whatsapp.com",
+        "-H", "Referer: https://web.whatsapp.com/",
+        "-H", "Content-Type: application/octet-stream",
+        "--data-binary", "@" + path_tmp, url]);
+    jika res["status"] != 0 { lempar "unggah gagal: " + ke_teks(res["error"]); }
+
+    buat j = json_decode(res["keluaran"]);
+    jika tipe(j) != "peta" || tipe(j["url"]) != "teks" {
+        lempar "respons unggah gak valid: " + ke_teks(res["keluaran"]);
+    }
+    buat r = peta_baru();
+    r["url"]             = j["url"];
+    r["direct_path"]     = j["direct_path"];
+    r["handle"]          = j["handle"];
+    r["media_key"]       = siap["media_key"];
+    r["file_sha256"]     = siap["file_sha256"];
+    r["file_enc_sha256"] = siap["file_enc_sha256"];
+    r["file_length"]     = siap["file_length"];
+    hasil r;
+}
+
+fungsi ambil_paket_stiker(pack_id) {
+    buat url = "https://static.whatsapp.net/sticker?lottie=1&cat=sticker_pack_data&id=" + pack_id + "&lg=en";
+    buat res = jalankan_perintah("curl", ["-sSL", "--fail",
+        "--connect-timeout", "15", "--max-time", "30",
+        "-H", "Origin: https://web.whatsapp.com",
+        "-H", "Referer: https://web.whatsapp.com/",
+        "-H", "User-Agent: Mozilla/5.0", url]);
+    jika res["status"] != 0 { lempar "ambil paket stiker gagal: " + ke_teks(res["error"]); }
+
+    buat arr = json_decode(res["keluaran"]);
+    jika tipe(arr) != "larik" || panjang(arr) == 0 {
+        lempar "gak ada paket stiker di respons buat id: " + pack_id;
+    }
+    hasil arr[0];
+}
+
+fungsi hapus_media(media_conn, tipe_media, direct_path, file_enc_sha256, handle) {
+    jika tipe(direct_path) != "teks" || panjang(direct_path) == 0 { hasil benar; }
+    jika tipe(media_conn) != "peta" || !media_conn["ok"] { lempar "media_conn belum siap"; }
+
+    buat dp_bersih = direct_path;
+    untuk (buat i = 0; i < panjang(direct_path); i = i + 1) {
+        jika potong(direct_path, i, i + 1) == "?" { dp_bersih = potong(direct_path, 0, i); berhenti; }
+    }
+
+    buat token = base64_url(file_enc_sha256);
+    buat mms = mms_dari_tipe(tipe_media);
+    buat url = "https://" + media_conn["host"][0] + "/mms/" + mms + "/" + token
+             + "?token=" + token
+             + "&d_md=" + base64_url(dp_bersih)
+             + "&auth=" + media_conn["auth"];
+    jika tipe(handle) == "teks" && panjang(handle) > 0 { url = url + "&e_handle=" + handle; }
+
+    buat res = jalankan_perintah("curl", ["-sS", "--fail", "-X", "DELETE",
+        "--connect-timeout", "15", "--max-time", "20",
+        "-H", "Origin: https://web.whatsapp.com",
+        "-H", "Referer: https://web.whatsapp.com/", url]);
+    jika res["status"] != 0 { lempar "hapus media gagal: " + ke_teks(res["error"]); }
+    hasil benar;
+}
+
+fungsi siapkan_upload_newsletter(plaintext) {
+    buat r = peta_baru();
+    r["data"]        = plaintext;
+    r["file_sha256"] = CP["hex_decode"](sha256_hex(plaintext));
+    r["file_length"] = panjang(plaintext);
+    hasil r;
+}
+
+fungsi unduh_media_by_path_ke_file(host, direct_path, file_enc_sha256, media_key, app_info, mms_type, path_tmp, path_tujuan) {
+    buat plain = UnduhMediaByPath(host, direct_path, file_enc_sha256, media_key, app_info, mms_type, path_tmp);
+    tulis_file(path_tujuan, plain);
+    hasil benar;
+}
+
+fungsi unduh_media_fb(host, direct_path, file_enc_sha256, media_key, tipe_media, path_tmp) {
+    hasil UnduhMediaByPath(host, direct_path, file_enc_sha256, media_key, info_dari_tipe(tipe_media), mms_dari_tipe(tipe_media), path_tmp);
+}
+
+fungsi unduh_media_ke_file(url, media_key, tipe_media, file_sha256_hex, path_tmp, path_tujuan) {
+    buat plain = UnduhMedia(url, media_key, tipe_media, file_sha256_hex, path_tmp);
+    tulis_file(path_tujuan, plain);
+    hasil benar;
+}
+
+fungsi unduh_thumbnail(host, direct_path, file_enc_sha256, media_key, path_tmp) {
+    hasil UnduhMediaByPath(host, direct_path, file_enc_sha256, media_key, INFO_LINK_THUMB, "thumbnail-link", path_tmp);
+}
+
+fungsi unggah_media_newsletter(siap, tipe_media, media_conn, path_tmp) {
+    jika tipe(media_conn) != "peta" || !media_conn["ok"] { lempar "media_conn belum siap"; }
+    tulis_file(path_tmp, siap["data"]);
+
+    buat token = base64_url(siap["file_sha256"]);
+    buat mms = "newsletter-" + mms_dari_tipe(tipe_media);
+    buat url = "https://" + media_conn["host"][0] + "/newsletter/" + mms + "/" + token
+             + "?auth=" + media_conn["auth"] + "&token=" + token;
+
+    buat res = jalankan_perintah("curl", ["-sS", "--fail", "-X", "POST",
+        "-H", "Origin: https://web.whatsapp.com",
+        "-H", "Referer: https://web.whatsapp.com/",
+        "-H", "Content-Type: application/octet-stream",
+        "--data-binary", "@" + path_tmp, url]);
+    jika res["status"] != 0 { lempar "unggah newsletter gagal: " + ke_teks(res["error"]); }
+
+    buat j = json_decode(res["keluaran"]);
+    jika tipe(j) != "peta" || tipe(j["url"]) != "teks" {
+        lempar "respons unggah newsletter gak valid: " + ke_teks(res["keluaran"]);
+    }
+    buat r = peta_baru();
+    r["url"]         = j["url"];
+    r["direct_path"] = j["direct_path"];
+    r["handle"]       = j["handle"];
+    r["file_sha256"]  = siap["file_sha256"];
+    r["file_length"]  = siap["file_length"];
+    hasil r;
+}

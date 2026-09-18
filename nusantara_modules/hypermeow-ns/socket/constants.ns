@@ -1,0 +1,14 @@
+
+buat ORIGIN = "https://web.whatsapp.com";
+buat URL_WS = "wss://web.whatsapp.com/ws/chat";
+
+buat NOISE_START_PATTERN = "Noise_XX_25519_AESGCM_SHA256" + teks_dari(0) + teks_dari(0) + teks_dari(0) + teks_dari(0);
+buat WA_MAGIC_VALUE = 6;
+buat DICT_VERSION = 3;
+
+fungsi WaConnHeader() {
+    hasil "WA" + teks_dari(WA_MAGIC_VALUE) + teks_dari(DICT_VERSION);
+}
+
+buat FRAME_MAX_SIZE = 16777216;
+buat FRAME_LENGTH_SIZE = 3;

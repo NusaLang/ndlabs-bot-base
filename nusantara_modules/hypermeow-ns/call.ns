@@ -1,0 +1,118 @@
+fungsi _jid(usr, srv) {
+    buat j = peta_baru();
+    j["jid"] = benar; j["user"] = usr; j["server"] = srv; j["device"] = 0; j["agent"] = 0;
+    hasil j;
+}
+
+fungsi _node(tag, attrs, children, content) {
+    buat n = peta_baru();
+    n["tag"] = tag;
+    jika tipe(attrs) == "peta" { n["attrs"] = attrs; } lain { n["attrs"] = peta_baru(); }
+    jika tipe(children) == "larik" { n["children"] = children; } lain { n["children"] = []; }
+    jika tipe(content) == "teks" { n["content"] = content; n["ada_isi"] = benar; }
+    lain jika panjang(n["children"]) > 0 { n["content"] = kosong; n["ada_isi"] = benar; }
+    lain { n["content"] = kosong; n["ada_isi"] = salah; }
+    hasil n;
+}
+
+fungsi BuatNodeTolakPanggilan(msg_id, kita_jid, penelepon_jid, call_id) {
+    buat ra = peta_baru();
+    ra["call-id"] = call_id;
+    ra["call-creator"] = penelepon_jid;
+    ra["count"] = "0";
+
+    buat a = peta_baru();
+    a["id"] = msg_id; a["from"] = kita_jid; a["to"] = penelepon_jid;
+    hasil _node("call", a, [_node("reject", ra, [], kosong)], kosong);
+}
+
+fungsi UraiPanggilan(node) {
+    buat r = peta_baru();
+    r["dari"] = node["attrs"]["from"];
+    r["id_stanza"] = node["attrs"]["id"];
+    r["waktu"] = node["attrs"]["t"];
+    r["jenis"] = "";
+    r["call_id"] = "";
+    r["video"] = salah;
+    r["grup"] = salah;
+
+    jika tipe(node["children"]) != "larik" || panjang(node["children"]) == 0 { hasil r; }
+    buat c = node["children"][0];
+    r["jenis"] = c["tag"];
+    r["call_id"] = c["attrs"]["call-id"];
+    r["penelepon"] = c["attrs"]["call-creator"];
+    jika tipe(c["attrs"]["video"]) == "teks" { r["video"] = benar; }
+    jika tipe(c["attrs"]["group_jid"]) == "peta" {
+        r["grup"] = benar;
+        r["grup_jid"] = c["attrs"]["group_jid"];
+    }
+    hasil r;
+}
+
+fungsi _attr_jid(attrs, nama) {
+    buat v = attrs[nama];
+    jika tipe(v) == "peta" { hasil v; }
+    hasil kosong;
+}
+
+fungsi _attr_teks(attrs, nama) {
+    buat v = attrs[nama];
+    jika tipe(v) == "teks" { hasil v; }
+    hasil "";
+}
+
+fungsi urai_panggilan_lengkap(node) {
+    buat r = peta_baru();
+    r["jenis_event"] = "unknown";
+    r["dari"] = _attr_jid(node["attrs"], "from");
+    r["id_stanza"] = _attr_teks(node["attrs"], "id");
+    r["waktu"] = _attr_teks(node["attrs"], "t");
+    r["call_id"] = "";
+    r["penelepon"] = kosong;
+    r["penelepon_alt"] = kosong;
+    r["grup_jid"] = kosong;
+    r["grup"] = salah;
+    r["platform"] = "";
+    r["versi"] = "";
+    r["media"] = "";
+    r["tipe"] = "";
+    r["alasan"] = "";
+    r["video"] = salah;
+    r["data"] = kosong;
+
+    jika tipe(node["children"]) != "larik" || panjang(node["children"]) != 1 { hasil r; }
+    buat c = node["children"][0];
+    buat ca = c["attrs"];
+    r["data"] = c;
+    r["jenis"] = c["tag"];
+    r["call_id"] = _attr_teks(ca, "call-id");
+    r["penelepon"] = _attr_jid(ca, "call-creator");
+    jika tipe(ca["video"]) == "teks" { r["video"] = benar; }
+
+    buat gj = _attr_jid(ca, "group-jid");
+    jika tipe(gj) != "peta" { gj = _attr_jid(ca, "group_jid"); }
+    jika tipe(gj) == "peta" { r["grup"] = benar; r["grup_jid"] = gj; }
+
+    jika tipe(r["penelepon"]) == "peta" && r["penelepon"]["server"] == "lid" {
+        r["penelepon_alt"] = _attr_jid(ca, "caller_pn");
+    } lain {
+        r["penelepon_alt"] = _attr_jid(ca, "caller_lid");
+    }
+
+    buat tag = c["tag"];
+    jika tag == "offer" || tag == "accept" || tag == "preaccept" || tag == "transport" {
+        r["jenis_event"] = tag;
+        r["platform"] = _attr_teks(node["attrs"], "platform");
+        r["versi"] = _attr_teks(node["attrs"], "version");
+    } lain jika tag == "offer_notice" {
+        r["jenis_event"] = tag;
+        r["media"] = _attr_teks(ca, "media");
+        r["tipe"] = _attr_teks(ca, "type");
+    } lain jika tag == "terminate" {
+        r["jenis_event"] = tag;
+        r["alasan"] = _attr_teks(ca, "reason");
+    } lain jika tag == "relaylatency" || tag == "reject" {
+        r["jenis_event"] = tag;
+    }
+    hasil r;
+}

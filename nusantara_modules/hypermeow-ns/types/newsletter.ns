@@ -1,0 +1,125 @@
+
+buat NEWSLETTER_VERIFICATION_STATE_VERIFIED = "verified";
+buat NEWSLETTER_VERIFICATION_STATE_UNVERIFIED = "unverified";
+
+buat NEWSLETTER_PRIVACY_PRIVATE = "private";
+buat NEWSLETTER_PRIVACY_PUBLIC = "public";
+
+buat NEWSLETTER_REACTIONS_MODE_ALL = "all";
+buat NEWSLETTER_REACTIONS_MODE_BASIC = "basic";
+buat NEWSLETTER_REACTIONS_MODE_NONE = "none";
+buat NEWSLETTER_REACTIONS_MODE_BLOCKLIST = "blocklist";
+
+buat NEWSLETTER_STATE_ACTIVE = "active";
+buat NEWSLETTER_STATE_SUSPENDED = "suspended";
+buat NEWSLETTER_STATE_GEOSUSPENDED = "geosuspended";
+
+buat NEWSLETTER_MUTE_ON = "on";
+buat NEWSLETTER_MUTE_OFF = "off";
+
+buat NEWSLETTER_ROLE_SUBSCRIBER = "subscriber";
+buat NEWSLETTER_ROLE_GUEST = "guest";
+buat NEWSLETTER_ROLE_ADMIN = "admin";
+buat NEWSLETTER_ROLE_OWNER = "owner";
+
+buat NEWSLETTER_KEY_TYPE_JID = "JID";
+buat NEWSLETTER_KEY_TYPE_INVITE = "INVITE";
+
+fungsi teks_kecil(s) {
+    buat out = "";
+    untuk (buat i = 0; i < panjang(s); i = i + 1) {
+        buat c = byte_di(s, i);
+        jika c >= 65 && c <= 90 { out = out + teks_dari(c + 32); } lain { out = out + teks_dari(c); }
+    }
+    hasil out;
+}
+
+fungsi newsletter_verification_state_dari_teks(teks) { hasil teks_kecil(teks); }
+fungsi newsletter_privacy_dari_teks(teks) { hasil teks_kecil(teks); }
+fungsi newsletter_state_dari_teks(teks) { hasil teks_kecil(teks); }
+fungsi newsletter_mute_state_dari_teks(teks) { hasil teks_kecil(teks); }
+fungsi newsletter_role_dari_teks(teks) { hasil teks_kecil(teks); }
+
+fungsi baru_newsletter_muted() {
+    buat m = peta_baru();
+    m["muted"] = salah;
+    hasil m;
+}
+
+fungsi baru_newsletter_viewer_metadata() {
+    buat m = peta_baru();
+    m["mute"] = ""; m["role"] = "";
+    hasil m;
+}
+
+fungsi baru_newsletter_reaction_settings() {
+    buat m = peta_baru();
+    m["value"] = "";
+    hasil m;
+}
+
+fungsi baru_newsletter_settings() {
+    buat m = peta_baru();
+    m["reaction_codes"] = baru_newsletter_reaction_settings();
+    hasil m;
+}
+
+fungsi baru_newsletter_text() {
+    buat m = peta_baru();
+    m["text"] = ""; m["id"] = ""; m["update_time"] = 0;
+    hasil m;
+}
+
+fungsi baru_newsletter_thread_metadata() {
+    buat m = peta_baru();
+    m["creation_time"] = 0; m["invite"] = "";
+    m["name"] = baru_newsletter_text(); m["description"] = baru_newsletter_text();
+    m["subscribers_count"] = 0; m["verification"] = "";
+    m["picture"] = kosong; m["preview"] = kosong; m["settings"] = baru_newsletter_settings();
+    hasil m;
+}
+
+fungsi baru_newsletter_metadata() {
+    buat m = peta_baru();
+    m["id"] = kosong;
+    buat st = peta_baru(); st["type"] = "";
+    m["state"] = st;
+    m["thread_metadata"] = baru_newsletter_thread_metadata();
+    m["viewer_metadata"] = kosong;
+    hasil m;
+}
+
+fungsi baru_newsletter_message() {
+    buat m = peta_baru();
+    m["message_server_id"] = 0; m["message_id"] = ""; m["type"] = ""; m["timestamp"] = 0;
+    m["views_count"] = 0; m["reaction_counts"] = peta_baru(); m["message"] = kosong;
+    hasil m;
+}
+
+fungsi baru_graphql_error_extensions() {
+    buat m = peta_baru();
+    m["error_code"] = 0; m["is_retryable"] = salah; m["severity"] = "";
+    hasil m;
+}
+
+fungsi baru_graphql_error() {
+    buat m = peta_baru();
+    m["extensions"] = baru_graphql_error_extensions(); m["message"] = ""; m["path"] = [];
+    hasil m;
+}
+
+fungsi graphql_error_string(gqle) {
+    hasil ke_teks(gqle["extensions"]["error_code"]) + " " + gqle["message"] + " (" + gqle["extensions"]["severity"] + ")";
+}
+
+fungsi graphql_errors_string(gqles) {
+    jika panjang(gqles) == 0 { hasil ""; }
+    jika panjang(gqles) == 1 { hasil graphql_error_string(gqles[0]); }
+    hasil graphql_error_string(gqles[0]) + " (and " + ke_teks(panjang(gqles) - 1) + " other errors)";
+}
+
+fungsi baru_graphql_response() {
+    buat m = peta_baru();
+    m["data"] = kosong; m["errors"] = [];
+    hasil m;
+}

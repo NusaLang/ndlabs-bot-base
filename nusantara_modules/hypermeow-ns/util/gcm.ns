@@ -1,0 +1,153 @@
+
+buat _cp = muat_plugin("crypto");
+
+buat _zero16 = "";
+selama panjang(_zero16) < 16 { _zero16 = _zero16 + teks_dari(0); }
+
+fungsi _j0(iv) {
+    jika panjang(iv) != 12 { lempar "IV harus 12 byte (96-bit)"; }
+    hasil iv + _z3() + teks_dari(1);
+}
+fungsi _z3() { hasil teks_dari(0) + teks_dari(0) + teks_dari(0); }
+
+fungsi _inc32(b) {
+    buat c3 = byte_di(b, 15) + 1;
+    buat carry = 0;
+    jika c3 > 255 { c3 = c3 - 256; carry = 1; }
+    buat c2 = byte_di(b, 14) + carry; carry = 0;
+    jika c2 > 255 { c2 = c2 - 256; carry = 1; }
+    buat c1 = byte_di(b, 13) + carry; carry = 0;
+    jika c1 > 255 { c1 = c1 - 256; carry = 1; }
+    buat c0 = byte_di(b, 12) + carry;
+    jika c0 > 255 { c0 = c0 - 256; }
+    hasil potong(b, 0, 12) + teks_dari(c0) + teks_dari(c1) + teks_dari(c2) + teks_dari(c3);
+}
+
+fungsi _ctr_xor(key_hex, j0, data, mulai) {
+    buat j1 = _inc32(j0);
+    buat ks_hex = _cp["aes_enkripsi"](_cp["hex_encode"](_zero16), key_hex, "ctr", _cp["hex_encode"](j1));
+    buat ks = _cp["hex_decode"](potong(ks_hex, 0, 32));
+    buat sisa = panjang(data) - mulai;
+    buat n = 16;
+    jika sisa < n { n = sisa; }
+    buat pot = potong(data, mulai, mulai + n);
+    buat ksn = potong(ks, 0, n);
+    buat r = peta_baru();
+    r["out"] = _xor16(pot, ksn);
+    r["j0"] = j1;
+    hasil r;
+}
+
+fungsi _xor16(a, b) {
+    hasil _cp["hex_decode"](_cp["xor_cipher"](_cp["hex_encode"](a), _cp["hex_encode"](b)));
+}
+
+fungsi _gf_mul(x, y) {
+    buat z = _zero16;
+    buat v = y;
+    untuk (buat i = 0; i < 128; i = i + 1) {
+
+        buat sisa = i % 8;
+        buat mask = 128;
+        untuk (buat k = 0; k < sisa; k = k + 1) { mask = (mask - (mask % 2)) / 2; }
+        buat byteX = byte_di(x, (i - sisa) / 8);
+        jika byteX % (mask * 2) >= mask {
+            z = _xor16(z, v);
+        }
+
+        buat lsb_v = byte_di(v, 15) % 2;
+        buat nv = "";
+        buat carry = 0;
+        untuk (buat b = 0; b < 16; b = b + 1) {
+            buat cur = byte_di(v, b);
+            buat lo = cur % 2;
+            buat nb = (cur - lo) / 2 + carry;
+            nv = nv + teks_dari(nb);
+            carry = lo * 128;
+        }
+        jika lsb_v == 1 {
+
+            nv = _xor16(potong(nv, 0, 1), teks_dari(225)) + potong(nv, 1, 16);
+        }
+        v = nv;
+    }
+    hasil z;
+}
+
+fungsi _pad16(s) {
+    buat n = panjang(s) % 16;
+    jika n == 0 { hasil s; }
+    buat out = s;
+    untuk (buat i = n; i < 16; i = i + 1) { out = out + teks_dari(0); }
+    hasil out;
+}
+
+fungsi _len_block(len_a, len_c) {
+    buat la = len_a * 8; buat lc = len_c * 8;
+    buat a3 = la % 256; buat s1 = (la - a3) / 256;
+    buat a2 = s1 % 256; buat s2 = (s1 - a2) / 256;
+    buat a1 = s2 % 256; buat s3 = (s2 - a1) / 256;
+    buat a0 = s3 % 256;
+    buat c3 = lc % 256; buat t1 = (lc - c3) / 256;
+    buat c2 = t1 % 256; buat t2 = (t1 - c2) / 256;
+    buat c1 = t2 % 256; buat t3 = (t2 - c1) / 256;
+    buat c0 = t3 % 256;
+    buat z4 = teks_dari(0) + teks_dari(0) + teks_dari(0) + teks_dari(0);
+    hasil z4 + teks_dari(a0) + teks_dari(a1) + teks_dari(a2) + teks_dari(a3)
+        + z4 + teks_dari(c0) + teks_dari(c1) + teks_dari(c2) + teks_dari(c3);
+}
+
+fungsi _ghash(h, aad, ct) {
+    buat y = _zero16;
+    buat total = _pad16(aad) + _pad16(ct) + _len_block(panjang(aad), panjang(ct));
+    buat off = 0;
+    selama off < panjang(total) {
+        y = _gf_mul(_xor16(y, potong(total, off, off + 16)), h);
+        off = off + 16;
+    }
+    hasil y;
+}
+
+buat _h_cache = peta_baru();
+fungsi _ghash_h(key) {
+    buat kk = _cp["hex_encode"](key);
+    jika tipe(_h_cache[kk]) == "teks" { hasil _h_cache[kk]; }
+    buat padded = _zero16;
+    untuk (buat i = 0; i < 16; i = i + 1) { padded = padded + teks_dari(16); }
+    buat e_hex = _cp["aes_enkripsi"](_cp["hex_encode"](padded), kk, "ecb", _cp["hex_encode"](_zero16));
+    buat hval = _cp["hex_decode"](potong(e_hex, 0, 32));
+    _h_cache[kk] = hval;
+    hasil hval;
+}
+
+fungsi _tag(key, iv, aad, ct) {
+    buat j0 = _j0(iv);
+    buat h = _ghash_h(key);
+    buat s = _ghash(h, aad, ct);
+    buat ks_hex = _cp["aes_enkripsi"](_cp["hex_encode"](_zero16), _cp["hex_encode"](key), "ctr", _cp["hex_encode"](j0));
+    buat ej0 = _cp["hex_decode"](potong(ks_hex, 0, 32));
+    hasil _xor16(ej0, s);
+}
+
+fungsi GcmEnkripsi(key, iv, plaintext, aad) {
+    buat j0 = _j0(iv);
+    buat ct = ""; buat off = 0;
+    selama off < panjang(plaintext) {
+        buat r = _ctr_xor(_cp["hex_encode"](key), j0, plaintext, off);
+        ct = ct + r["out"]; j0 = r["j0"]; off = off + 16;
+    }
+    buat r2 = peta_baru();
+    r2["ct"] = ct; r2["tag"] = _tag(key, iv, aad, ct);
+    hasil r2;
+}
+
+fungsi GcmDekripsi(key, iv, ciphertext, aad, tag) {
+    jika panjang(tag) != 16 || _tag(key, iv, aad, ciphertext) != tag { lempar "autentikasi GCM gagal"; }
+    buat j0 = _j0(iv);
+    buat pt = ""; buat off = 0;
+    selama off < panjang(ciphertext) {
+        buat r = _ctr_xor(_cp["hex_encode"](key), j0, ciphertext, off);
+        pt = pt + r["out"]; j0 = r["j0"]; off = off + 16;
+    }
+    hasil pt;
+}

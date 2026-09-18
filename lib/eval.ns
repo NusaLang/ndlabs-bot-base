@@ -1,0 +1,337 @@
+buat CP = muat_plugin("crypto");
+buat PB = impor("../nusantara_modules/hypermeow-ns/proto/pb.ns");
+
+fungsi _eval_ext(md) {
+    jika tipe(md) != "peta" || tipe(md["mimetype"]) != "teks" { hasil "bin"; }
+    buat mime = md["mimetype"];
+    jika _eval_ada(mime, "jpeg") { hasil "jpg"; }
+    jika _eval_ada(mime, "png") { hasil "png"; }
+    jika _eval_ada(mime, "webp") { hasil "webp"; }
+    jika _eval_ada(mime, "mp4") { hasil "mp4"; }
+    jika _eval_ada(mime, "ogg") { hasil "ogg"; }
+    jika _eval_ada(mime, "pdf") { hasil "pdf"; }
+    hasil "bin";
+}
+
+fungsi _eval_ada(s, cari) {
+    buat n = panjang(cari);
+    untuk (buat i = 0; i + n <= panjang(s); i = i + 1) {
+        jika potong(s, i, i + n) == cari { hasil benar; }
+    }
+    hasil salah;
+}
+
+fungsi _eval_unduh(wa, media_obj) {
+    jika tipe(wa) == "kosong" || tipe(media_obj) != "peta" { hasil ""; }
+    coba {
+        buat ext = _eval_ext(media_obj);
+        buat path = "/tmp/evalmedia_" + ke_teks(waktu()) + "_" + CP["acak_bytes_hex"](4) + "." + ext;
+        wa.UnduhMedia(media_obj, path);
+        hasil path;
+    } tangkap (e) { hasil ""; }
+}
+
+fungsi bangun_m(wa, sender, text_content, from_me) {
+    buat m = peta_baru();
+    m["sender"] = sender;
+    m["rawSender"] = sender;
+    m["text"] = text_content;
+    m["fromMe"] = from_me;
+    m["chat"] = "";
+    m["isGroup"] = salah;
+    m["id"] = "";
+    m["device"] = 0;
+    m["body"] = text_content;
+    m["type"] = "conversation";
+    m["mention"] = [];
+    m["quoted"] = kosong;
+    m["quotedObj"] = kosong;
+    m["media"] = kosong;
+    m["message"] = kosong;
+    m["msg"] = kosong;
+    m["isMedia"] = salah;
+    m["isViewOnce"] = salah;
+    m["mediaPath"] = "";
+    m["key"] = peta_baru();
+    m["key"]["remoteJid"] = "";
+    m["key"]["fromMe"] = from_me;
+    m["key"]["id"] = "";
+    m["key"]["participant"] = kosong;
+
+    jika tipe(wa) == "kosong" { hasil m; }
+    m["isGroup"] = wa.IsGrup;
+
+    buat c = wa.konteks;
+    jika tipe(c) == "peta" {
+        m["chat"] = ke_teks(c["chat_user"]) + "@" + ke_teks(c["server"]);
+        m["id"] = c["msg_id"];
+        m["key"]["remoteJid"] = m["chat"];
+        m["key"]["id"] = c["msg_id"];
+        m["pushName"] = "";
+        jika tipe(c["push_name"]) == "teks" { m["pushName"] = c["push_name"]; }
+        jika tipe(c["pengirim"]) == "peta" {
+            m["senderJid"] = ke_teks(c["pengirim"]["user"]) + "@" + ke_teks(c["pengirim"]["server"]);
+            m["rawSender"] = m["senderJid"];
+            jika tipe(c["pengirim"]["device"]) == "angka" { m["device"] = c["pengirim"]["device"]; }
+            jika m["isGroup"] { m["key"]["participant"] = m["senderJid"]; }
+        }
+        jika tipe(c["wire_mentah"]) == "teks" && panjang(c["wire_mentah"]) > 0 {
+            coba { m["message"] = PB.PbDekodeBernama(c["wire_mentah"]); } tangkap (e) {}
+        }
+    }
+
+    buat b = wa.budy;
+    jika tipe(b) == "peta" && b["ada"] {
+        m["body"] = b["body"];
+        m["type"] = b["tipe"];
+        m["mention"] = b["mention"];
+        m["isMedia"] = b["ada_media"];
+        m["isImage"] = salah; m["isVideo"] = salah; m["isAudio"] = salah;
+        m["isDocument"] = salah; m["isSticker"] = salah;
+        jika tipe(b["dibungkus"]) == "boolean" { m["isViewOnce"] = b["dibungkus"]; }
+        jika b["ada_media"] {
+            buat md = peta_baru();
+            md["tipe"] = b["media"]["tipe_media"];
+            md["mime"] = b["media"]["mimetype"];
+            md["ukuran"] = b["media"]["file_length"];
+            md["caption"] = b["media"]["caption"];
+            md["nama"] = b["media"]["nama_file"];
+            m["media"] = md;
+            m["msg"] = md;
+            jika md["tipe"] == "image" { m["isImage"] = benar; }
+            jika md["tipe"] == "video" { m["isVideo"] = benar; }
+            jika md["tipe"] == "audio" || md["tipe"] == "ptt" { m["isAudio"] = benar; }
+            jika md["tipe"] == "document" { m["isDocument"] = benar; }
+            jika md["tipe"] == "sticker" { m["isSticker"] = benar; }
+            m["mediaPath"] = _eval_unduh(wa, b["media"]);
+        } lain {
+            buat msg_teks = peta_baru();
+            msg_teks["text"] = b["body"];
+            m["msg"] = msg_teks;
+        }
+        jika tipe(b["kutipan"]) == "peta" {
+            buat q = peta_baru();
+            q["id"] = b["kutipan"]["stanza_id"];
+            q["sender"] = b["kutipan"]["participant"];
+            q["text"] = b["kutipan"]["teks"];
+            q["isImage"] = salah; q["isVideo"] = salah; q["isAudio"] = salah;
+            q["isDocument"] = salah; q["isSticker"] = salah; q["ada_media"] = salah;
+            jika tipe(b["kutipan"]["ada_media"]) == "boolean" && b["kutipan"]["ada_media"] && tipe(b["kutipan"]["media"]) == "peta" {
+                q["ada_media"] = benar;
+                buat qt = b["kutipan"]["media"]["tipe_media"];
+                jika qt == "image" { q["isImage"] = benar; }
+                jika qt == "video" { q["isVideo"] = benar; }
+                jika qt == "audio" || qt == "ptt" { q["isAudio"] = benar; }
+                jika qt == "document" { q["isDocument"] = benar; }
+                jika qt == "sticker" { q["isSticker"] = benar; }
+                q["mediaPath"] = _eval_unduh(wa, b["kutipan"]["media"]);
+            }
+            jika tipe(b["kutipan"]["pesan_wire"]) == "teks" && panjang(b["kutipan"]["pesan_wire"]) > 0 {
+                coba { m["quotedObj"] = PB.PbDekodeBernama(b["kutipan"]["pesan_wire"]); } tangkap (e) {}
+            }
+            q["message"] = m["quotedObj"];
+            m["quoted"] = q;
+        }
+    }
+    hasil m;
+}
+
+fungsi _json_aman(v) {
+    coba { hasil json_encode(v); } tangkap (e) { hasil "{}"; }
+}
+
+fungsi _pangkas(s) {
+    buat a = 0;
+    buat b = panjang(s);
+    selama a < b && (byte_di(s, a) == 32 || byte_di(s, a) == 10 || byte_di(s, a) == 13 || byte_di(s, a) == 9) { a = a + 1; }
+    selama b > a {
+        buat c = byte_di(s, b - 1);
+        jika c == 32 || c == 10 || c == 13 || c == 9 { b = b - 1; } lain { berhenti; }
+    }
+    hasil potong(s, a, b);
+}
+
+fungsi _mulai_dengan(s, awalan) {
+    jika panjang(s) < panjang(awalan) { hasil salah; }
+    hasil potong(s, 0, panjang(awalan)) == awalan;
+}
+
+fungsi _ada_karakter(s, kode_byte) {
+    untuk (buat i = 0; i < panjang(s); i = i + 1) {
+        jika byte_di(s, i) == kode_byte { hasil benar; }
+    }
+    hasil salah;
+}
+
+fungsi _statement(s) {
+    buat kw = ["buat ", "let ", "jika ", "if ", "untuk ", "for ", "selama ", "while ",
+               "fungsi ", "func ", "hasil ", "return ", "cetak(", "print(", "coba ",
+               "try ", "lempar ", "throw ", "kelas ", "class ", "jalan(", "go(",
+               "berhenti", "lanjut", "impor(", "import(", "tulis_file("];
+    untuk (buat i = 0; i < panjang(kw); i = i + 1) {
+        jika _mulai_dengan(s, kw[i]) { hasil benar; }
+    }
+    hasil salah;
+}
+
+fungsi _pindai_segmen(s) {
+    buat r = peta_baru();
+    buat mulai_seg = [];
+    buat akhir_seg = [];
+    buat pemisah = [];
+
+    buat dalam_teks = salah;
+    buat depth = 0;
+    buat mulai = 0;
+
+    untuk (buat i = 0; i < panjang(s); i = i + 1) {
+        buat c = byte_di(s, i);
+        jika dalam_teks {
+            jika c == 92 { i = i + 1; lanjut; }
+            jika c == 34 { dalam_teks = salah; }
+            lanjut;
+        }
+        jika c == 34 { dalam_teks = benar; lanjut; }
+
+        jika c == 123 || c == 91 || c == 40 { depth = depth + 1; lanjut; }
+        jika c == 125 || c == 93 || c == 41 {
+            depth = depth - 1;
+            jika depth == 0 && c == 125 {
+                tambah(mulai_seg, mulai); tambah(akhir_seg, i + 1); tambah(pemisah, "}");
+                mulai = i + 1;
+            }
+            lanjut;
+        }
+        jika c == 59 && depth == 0 {
+            tambah(mulai_seg, mulai); tambah(akhir_seg, i); tambah(pemisah, ";");
+            mulai = i + 1;
+        }
+    }
+
+    r["mulai"] = mulai_seg;
+    r["akhir"] = akhir_seg;
+    r["pemisah"] = pemisah;
+    r["sisa_mulai"] = mulai;
+    hasil r;
+}
+
+fungsi bungkus_cetak(kode) {
+    buat asli = _pangkas(kode);
+    jika panjang(asli) == 0 { hasil kode; }
+
+    buat seg = _pindai_segmen(asli);
+    buat ekor = _pangkas(potong(asli, seg["sisa_mulai"], panjang(asli)));
+
+    jika panjang(ekor) > 0 {
+        jika _statement(ekor) { hasil asli; }
+        jika _ada_karakter(ekor, 125) { hasil asli; }
+        hasil potong(asli, 0, seg["sisa_mulai"]) + "\ncetak(RAPI(" + ekor + "));";
+    }
+
+    buat n = panjang(seg["mulai"]);
+    jika n == 0 { hasil asli; }
+    jika seg["pemisah"][n - 1] == "}" { hasil asli; }
+
+    buat m0 = seg["mulai"][n - 1];
+    buat m1 = seg["akhir"][n - 1];
+    buat terakhir = _pangkas(potong(asli, m0, m1));
+    jika panjang(terakhir) == 0 { hasil asli; }
+    jika _statement(terakhir) { hasil asli; }
+    jika _ada_karakter(terakhir, 125) { hasil asli; }
+
+    hasil potong(asli, 0, m0) + "\ncetak(RAPI(" + terakhir + "));";
+}
+
+// `>` eval jalan di subprocess `nusa -e` terpisah (gak nyambung ke koneksi
+// WA live -- demi safety, biar eval yang jelek/nyangkut gak nge-crash bot
+// utama). Biar nopal.sendMessage(...) di dalam eval beneran bisa ngirim,
+// permintaannya ditulis ke tabel `eval_send_queue` (SQLite yang sama-sama
+// dipakai proses bot utama), lalu di-poll sampai proses bot utama (loop
+// koneksi di bot/runtime.ns) beneran eksekusi kirimnya dan nulis balik
+// hasilnya -- lihat db.ns (AntrianKirim*) dan runtime.ns (poll tiap 1 detik).
+buat _NOPAL_PRELUDE =
+    "buat _SQL = muat_plugin(\"sqlite\");\n" +
+    "buat _CPQ = muat_plugin(\"crypto\");\n" +
+    "buat _dbq = _SQL[\"db_buka\"](\"database/wa-bot.db\");\n" +
+    "kelas Nopal {\n" +
+    "    fungsi sendMessage(chat, pesan, opsi) {\n" +
+    "        buat id = _CPQ[\"acak_bytes_hex\"](8);\n" +
+    "        buat opsi_teks = \"\";\n" +
+    "        jika tipe(opsi) == \"peta\" { opsi_teks = json_encode(opsi); }\n" +
+    "        _SQL[\"db_jalankan\"](_dbq, \"INSERT INTO eval_send_queue (id, chat, message_json, opsi_json, status, ts) VALUES (?, ?, ?, ?, 'pending', ?);\", json_encode([id, chat, json_encode(pesan), opsi_teks, waktu()]));\n" +
+    "        buat coba_ke = 0;\n" +
+    "        selama coba_ke < 75 {\n" +
+    "            buat res = json_decode(_SQL[\"db_query\"](_dbq, \"SELECT status, hasil_json FROM eval_send_queue WHERE id = ?;\", json_encode([id])));\n" +
+    "            jika res[\"ok\"] && panjang(res[\"rows\"]) > 0 {\n" +
+    "                buat row = res[\"rows\"][0];\n" +
+    "                jika row[\"status\"] != \"pending\" {\n" +
+    "                    jika tipe(row[\"hasil_json\"]) == \"teks\" && panjang(row[\"hasil_json\"]) > 0 { hasil json_decode(row[\"hasil_json\"]); }\n" +
+    "                    hasil row[\"status\"];\n" +
+    "                }\n" +
+    "            }\n" +
+    "            jalankan_perintah(\"sleep\", [\"0.2\"]);\n" +
+    "            coba_ke = coba_ke + 1;\n" +
+    "        }\n" +
+    "        hasil \"timeout: bot utama gak balas dalam 15 detik\";\n" +
+    "    }\n" +
+    "}\n" +
+    "buat nopal = Nopal();\n";
+
+// `m` dibungkus jadi `bentuk` (struct asli) biar bisa diakses pake titik
+// (m.chat, m.key.remoteJid, dst) kayak objek beneran, bukan `m["chat"]`.
+// Field yang bentuknya bebas/gak tetap (quoted/media/message/msg/mention)
+// TETEP peta biasa (bracket) -- struct field-nya harus fix, sedangkan
+// message proto bisa 234 macam bentuk.
+buat _M_BENTUK =
+    "bentuk M { sender, rawSender, text, fromMe, chat, isGroup, id, device, body, type, mention, quoted, quotedObj, media, message, msg, isMedia, isViewOnce, mediaPath, key, pushName, senderJid, isImage, isVideo, isAudio, isDocument, isSticker }\n" +
+    "bentuk MKunci { remoteJid, fromMe, id, participant }\n";
+
+fungsi _bungkus_m_teks() {
+    hasil "buat _md = _m_mentah;\n"
+        + "buat _mk = MKunci(_md[\"key\"][\"remoteJid\"], _md[\"key\"][\"fromMe\"], _md[\"key\"][\"id\"], _md[\"key\"][\"participant\"]);\n"
+        + "buat m = M(_md[\"sender\"], _md[\"rawSender\"], _md[\"text\"], _md[\"fromMe\"], _md[\"chat\"], _md[\"isGroup\"], _md[\"id\"], _md[\"device\"], _md[\"body\"], _md[\"type\"], _md[\"mention\"], _md[\"quoted\"], _md[\"quotedObj\"], _md[\"media\"], _md[\"message\"], _md[\"msg\"], _md[\"isMedia\"], _md[\"isViewOnce\"], _md[\"mediaPath\"], _mk, _md[\"pushName\"], _md[\"senderJid\"], _md[\"isImage\"], _md[\"isVideo\"], _md[\"isAudio\"], _md[\"isDocument\"], _md[\"isSticker\"]);\n"
+        + "buat quoted = m.quoted;\n";
+}
+
+fungsi jalankan_eval(kode, m) {
+    buat m_json = _json_aman(m);
+    buat prelude = "buat PB = impor(\"nusantara_modules/hypermeow-ns/proto/pb.ns\");\n"
+        + "fungsi RAPI(v) { hasil PB.pb_js_inspect(v, 0); }\n"
+        + _M_BENTUK
+        + "buat _m_mentah = json_decode(" + json_encode(m_json) + ");\n"
+        + _bungkus_m_teks()
+        + _NOPAL_PRELUDE;
+    buat penuh = prelude + bungkus_cetak(kode);
+
+    buat res = jalankan_perintah("nusa", ["-e", penuh]);
+    buat out = ke_teks(res["keluaran"]);
+    buat err = ke_teks(res["error"]);
+
+    jika res["status"] != 0 {
+        jika panjang(err) > 0 { hasil "❌ " + err; }
+        jika panjang(out) > 0 { hasil "❌ " + out; }
+        hasil "❌ eval gagal (status " + ke_teks(res["status"]) + ")";
+    }
+    jika panjang(out) == 0 && panjang(err) > 0 { hasil err; }
+    jika panjang(out) == 0 { hasil "(tanpa keluaran)"; }
+    hasil out;
+}
+
+fungsi jalankan_shell(perintah) {
+    buat res = jalankan_perintah("bash", ["-c", perintah]);
+    buat out = ke_teks(res["keluaran"]);
+    buat err = ke_teks(res["error"]);
+    buat gabung = out;
+    jika panjang(err) > 0 {
+        jika panjang(gabung) > 0 { gabung = gabung + "\n"; }
+        gabung = gabung + err;
+    }
+    jika panjang(gabung) == 0 { gabung = "(tanpa keluaran)"; }
+    jika res["status"] != 0 { hasil "exit " + ke_teks(res["status"]) + "\n" + gabung; }
+    hasil gabung;
+}
+
+fungsi potong_keluaran(s, batas) {
+    jika panjang(s) <= batas { hasil s; }
+    hasil potong(s, 0, batas) + "\n\n... (dipotong, total " + ke_teks(panjang(s)) + " karakter)";
+}

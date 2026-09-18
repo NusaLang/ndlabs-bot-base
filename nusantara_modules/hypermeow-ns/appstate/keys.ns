@@ -1,0 +1,76 @@
+
+buat HK = impor("../util/hkdf.ns");
+buat CBC = impor("../util/cbc.ns");
+buat H512 = impor("../util/hmac512.ns");
+buat CP = muat_plugin("crypto");
+
+buat PATCH_CRITICAL_BLOCK = "critical_block";
+buat PATCH_CRITICAL_UNBLOCK_LOW = "critical_unblock_low";
+buat PATCH_REGULAR_LOW = "regular_low";
+buat PATCH_REGULAR_HIGH = "regular_high";
+buat PATCH_REGULAR = "regular";
+
+buat OP_SET = 0;
+buat OP_REMOVE = 1;
+
+fungsi ExpandAppStateKeys(key_data) {
+    buat prk_hex = HK.HkdfExtract("", key_data);
+    buat okm = HK.HkdfExpand(prk_hex, "WhatsApp Mutation Keys", 160);
+    buat k = peta_baru();
+    k["index"] = potong(okm, 0, 32);
+    k["value_enc"] = potong(okm, 32, 64);
+    k["value_mac"] = potong(okm, 64, 96);
+    k["snapshot_mac"] = potong(okm, 96, 128);
+    k["patch_mac"] = potong(okm, 128, 160);
+    hasil k;
+}
+
+fungsi uint64_be_bytes(val) {
+    buat b = [0, 0, 0, 0, 0, 0, 0, 0];
+    untuk (buat j = 7; j >= 0; j = j - 1) {
+        buat lo = val % 256;
+        b[j] = lo;
+        val = (val - lo) / 256;
+    }
+    buat out = "";
+    untuk (buat k2 = 0; k2 < 8; k2 = k2 + 1) { out = out + teks_dari(b[k2]); }
+    hasil out;
+}
+
+fungsi _concat(arr) {
+    buat out = "";
+    untuk (buat i = 0; i < panjang(arr); i = i + 1) { out = out + arr[i]; }
+    hasil out;
+}
+
+fungsi GenerateSnapshotMac(hash128, version, name, key) {
+    hasil CP["hex_decode"](potong(hmac_sha256_hex(key, _concat([hash128, uint64_be_bytes(version), name])), 0, 64));
+}
+
+fungsi GeneratePatchMac(snapshot_mac_prev, added_value_macs, version, name, key) {
+    buat arr = [snapshot_mac_prev];
+    untuk (buat i = 0; i < panjang(added_value_macs); i = i + 1) { tambah(arr, added_value_macs[i]); }
+    tambah(arr, uint64_be_bytes(version));
+    tambah(arr, name);
+    hasil CP["hex_decode"](potong(hmac_sha256_hex(key, _concat(arr)), 0, 64));
+}
+
+fungsi GenerateContentMac(op, data, key_id, key) {
+    buat msg = teks_dari(op + 1) + key_id + data + uint64_be_bytes(panjang(key_id) + 1);
+    hasil CP["hex_decode"](potong(H512.HmacSha512Hex(key, msg), 0, 64));
+}
+
+fungsi DecodeBlob(op, key_id, blob, keys) {
+    jika panjang(blob) < 64 { lempar "blob terlalu pendek"; }
+    buat value_mac = potong(blob, panjang(blob) - 32, panjang(blob));
+    buat body = potong(blob, 0, panjang(blob) - 32);
+    buat expect = GenerateContentMac(op, body, key_id, keys["value_mac"]);
+    jika expect != value_mac { lempar "content MAC tidak cocok"; }
+    buat iv = potong(body, 0, 16);
+    buat ct = potong(body, 16, panjang(body));
+    buat pt = CBC.CbcDekripsi(keys["value_enc"], iv, ct);
+    buat r = peta_baru();
+    r["value_mac"] = value_mac;
+    r["plaintext"] = pt;
+    hasil r;
+}

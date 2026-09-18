@@ -1,0 +1,29 @@
+
+buat PRESENCE_AVAILABLE = "available";
+buat PRESENCE_UNAVAILABLE = "unavailable";
+
+buat CHAT_PRESENCE_COMPOSING = "composing";
+buat CHAT_PRESENCE_PAUSED = "paused";
+
+buat CHAT_PRESENCE_MEDIA_TEXT = "";
+buat CHAT_PRESENCE_MEDIA_AUDIO = "audio";
+
+buat RECEIPT_TYPE_DELIVERED = "";
+buat RECEIPT_TYPE_SENDER = "sender";
+buat RECEIPT_TYPE_RETRY = "retry";
+buat RECEIPT_TYPE_READ = "read";
+buat RECEIPT_TYPE_READ_SELF = "read-self";
+buat RECEIPT_TYPE_PLAYED = "played";
+buat RECEIPT_TYPE_PLAYED_SELF = "played-self";
+buat RECEIPT_TYPE_SERVER_ERROR = "server-error";
+buat RECEIPT_TYPE_INACTIVE = "inactive";
+buat RECEIPT_TYPE_PEER_MSG = "peer_msg";
+buat RECEIPT_TYPE_HISTORY_SYNC = "hist_sync";
+
+fungsi receipt_type_gostring(rt) {
+    jika rt == RECEIPT_TYPE_READ { hasil "types.ReceiptTypeRead"; }
+    jika rt == RECEIPT_TYPE_READ_SELF { hasil "types.ReceiptTypeReadSelf"; }
+    jika rt == RECEIPT_TYPE_DELIVERED { hasil "types.ReceiptTypeDelivered"; }
+    jika rt == RECEIPT_TYPE_PLAYED { hasil "types.ReceiptTypePlayed"; }
+    hasil "types.ReceiptType(\"" + rt + "\")";
+}

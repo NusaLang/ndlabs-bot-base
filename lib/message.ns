@@ -1,0 +1,30 @@
+
+fungsi buat_message_context(sender_jid, text_content, socket, wa_snapshot) {
+    // wa_snapshot dikunci di sini (bukan baca ulang socket["WA"] tiap
+    // dipanggil) -- socket["WA"] itu satu field bersama yang bisa ketimpa
+    // pesan lain di worker/goroutine sebelahnya, jadi react/reply yang
+    // telat (nunggu upload/convert dll) bisa nyasar ke pesan yang salah
+    // kalau baca live socket["WA"] pas dipanggil belakangan.
+    jika tipe(wa_snapshot) == "kosong" { wa_snapshot = socket["WA"]; }
+    buat msg = peta_baru();
+    msg["Sender"] = sender_jid;
+    msg["Text"] = text_content;
+    msg["Socket"] = socket;
+    msg["WA"] = wa_snapshot;
+    msg["react"] = fungsi(emoji) {
+        jika tipe(wa_snapshot) != "kosong" && tipe(wa_snapshot["react"]) == "fungsi" {
+            coba { wa_snapshot["react"](emoji); } tangkap (e) {}
+        }
+    };
+    msg["budy"] = peta_baru();
+    jika tipe(wa_snapshot) != "kosong" && tipe(wa_snapshot["budy"]) == "peta" {
+        msg["budy"] = wa_snapshot["budy"];
+    }
+
+    msg["Reply"] = fungsi(reply_text) {
+        cetak("[BOT REPLY TO " + sender_jid + "]: " + reply_text);
+        hasil reply_text;
+    };
+
+    hasil msg;
+}

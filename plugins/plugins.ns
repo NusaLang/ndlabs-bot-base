@@ -1,0 +1,234 @@
+
+buat BASE = impor("../plugin/plugin.ns");
+buat MENU = impor("../plugin/menu.ns");
+buat AIRICH = impor("../lib/airich.ns");
+buat A2UI = impor("../lib/a2ui.ns");
+buat SYSINFO = impor("../lib/sysinfo.ns");
+buat GAMBAR_MENU_URL = "https://nusa.nd-labs.cloud/menu.jpg";
+buat MULAI_BOT = waktu();
+buat GAMBAR_MENU = "assets/menu_send.jpg";
+buat FOOTER_BOT = "ND-Labs";
+
+fungsi ambil_rss_memory() {
+    coba {
+        coba { gc_paksa(); } tangkap (egc) {}
+        buat isi = baca_file("/proc/self/status");
+        untuk (buat i = 0; i < panjang(isi) - 6; i = i + 1) {
+            jika potong(isi, i, i + 6) == "VmRSS:" {
+                buat s = potong(isi, i + 6, i + 40);
+                buat res = "";
+                buat saring = salah;
+                untuk (buat j = 0; j < panjang(s); j = j + 1) {
+                    buat c = byte_di(s, j);
+                    jika c == 10 { berhenti; }
+                    jika c >= 48 && c <= 57 {
+                        saring = benar;
+                        res = res + potong(s, j, j + 1);
+                    } lain jika saring {
+                        berhenti;
+                    }
+                }
+                jika panjang(res) > 0 {
+                    buat kb = ke_angka(res);
+                    buat mb = kb / 1024;
+                    buat mb_round = (mb * 10 - ((mb * 10) % 1)) / 10;
+                    hasil ke_teks(mb_round) + " MB (" + ke_teks(kb) + " KB)";
+                }
+            }
+        }
+    } tangkap (e) {}
+    hasil "N/A";
+}
+
+fungsi _ping_kirim_dashboard(msg) {
+    buat wa = msg["WA"];
+    jika tipe(wa) == "kosong" { msg["Reply"]("API belum siap."); hasil "API belum siap."; }
+    jika !wa.IsGrup {
+        buat r0 = "Dashboard HTML cuma bisa dipakai di dalam grup.";
+        msg["Reply"](r0); hasil r0;
+    }
+
+    msg["react"]("⏳");
+    coba {
+        buat data = SYSINFO.ambil(MULAI_BOT);
+        buat html = baca_file("scripts/dashboard.html");
+        buat bagian = pisah(html, "__NDLABS_DASHBOARD_DATA__");
+        jika panjang(bagian) != 2 { lempar "template dashboard rusak (marker gak ketemu)"; }
+        html = bagian[0] + json_encode(data) + bagian[1];
+        AIRICH.kirim_rich_html(wa, "System Dashboard", html);
+        msg["react"]("✅");
+        hasil "";
+    } tangkap (e) {
+        msg["react"]("❌");
+        buat r0 = "Gagal kirim dashboard: " + ke_teks(e);
+        msg["Reply"](r0); hasil r0;
+    }
+}
+
+fungsi NewPingPlugin() {
+    buat p = BASE.baru_base_plugin("Ping", "1.0.0", "ndlabs", "main", "Cek bot hidup + info runtime & memori (--html buat dashboard visual)");
+    p["GetCommands"] = fungsi() { hasil ["ping"]; };
+    p["Execute"] = fungsi(msg, args) {
+        jika panjang(args) > 0 && (args[0] == "--html" || args[0] == "html") {
+            hasil _ping_kirim_dashboard(msg);
+        }
+
+        buat mem_rss = ambil_rss_memory();
+        buat total_detik = waktu() - MULAI_BOT;
+        total_detik = total_detik - (total_detik % 1);
+        buat jam = (total_detik - (total_detik % 3600)) / 3600;
+        buat sisa = total_detik % 3600;
+        buat menit = (sisa - (sisa % 60)) / 60;
+        buat detik = sisa % 60;
+        buat uptime_str = ke_teks(jam) + "j " + ke_teks(menit) + "m " + ke_teks(detik) + "d";
+
+        buat caption = "🚀 *STATUS RUNTIME BOT*\n\n";
+        caption = caption + "• *Status*: Aktif & Online ⚡\n";
+        caption = caption + "• *RAM (RSS)*: `" + mem_rss + "`\n";
+        caption = caption + "• *Uptime*: `" + uptime_str + "`\n";
+
+        buat wa = msg["WA"];
+        jika tipe(wa) != "kosong" {
+            coba {
+                buat btn_refresh = wa.TombolBalasanCepat("🔄 Refresh Status", ".ping");
+                wa.KirimInteraktif(caption, [btn_refresh], FOOTER_BOT, GAMBAR_MENU, kosong);
+                hasil "";
+            } tangkap (e) {
+                cetak("[PING] Gagal kirim interaktif, jatuh ke teks: " + ke_teks(e));
+            }
+        }
+        msg["Reply"](caption);
+        hasil caption;
+    };
+    hasil p;
+}
+
+fungsi NewHelpPlugin(manager) {
+    buat p = BASE.baru_base_plugin("Help", "1.0.0", "ndlabs", "main", "Menu utama bot, pilih kategori buat lanjut ke submenu");
+    p["GetCommands"] = fungsi() { hasil ["menu"]; };
+    p["Execute"] = fungsi(msg, args) {
+        buat res = "";
+        jika panjang(args) > 0 && panjang(args[0]) > 0 {
+            buat nama = args[0];
+            untuk (buat i = 0; i < panjang(nama); i = i + 1) {
+                jika byte_di(nama, i) == 32 { nama = potong(nama, 0, i); berhenti; }
+            }
+            jika potong(nama, 0, 1) == "." { nama = potong(nama, 1, panjang(nama)); }
+            res = MENU.buat_detail_perintah(manager, ".", nama);
+            msg["Reply"](res);
+            hasil res;
+        }
+
+        res = MENU.buat_ringkasan_teks(manager, ".", "MIAW BOT", waktu() - MULAI_BOT);
+        buat wa = msg["WA"];
+        jika tipe(wa) != "kosong" && wa.IsGrup {
+            coba {
+                buat sections = MENU.buat_ringkasan_sections(manager, ".");
+                buat total = 0;
+                untuk (buat i = 0; i < panjang(sections); i = i + 1) { total = total + panjang(sections[i]["rows"]); }
+
+                buat komponen = _a2ui_komponen_judul("MIAW BOT", "Online · " + ke_teks(total) + " perintah siap pakai");
+                buat bt_list = A2UI.tombolList("📋 Lihat Kategori", sections);
+
+                buat opsi = peta_baru();
+                opsi["footer"] = FOOTER_BOT;
+                opsi["tombol"] = [bt_list];
+                A2UI.kirim(wa, komponen, opsi);
+                hasil "";
+            } tangkap (e) {
+                cetak("[MENU] Gagal kirim a2ui, jatuh ke teks: " + ke_teks(e));
+            }
+        }
+        msg["Reply"](res);
+        hasil res;
+    };
+    hasil p;
+}
+
+// komponen a2ui bareng: gambar di atas + judul + subjudul, dipakai .menu,
+// .allmenu, dan tiap submenu -- biar tampilannya konsisten semua.
+fungsi _a2ui_komponen_judul(judul, subjudul) {
+    hasil [
+        A2UI.kolomC("root", ["m_gambar", "m_judul", "m_sub"]),
+        A2UI.gambarC("m_gambar", GAMBAR_MENU_URL, "header", "cover"),
+        A2UI.teksC("m_judul", judul, "h1"),
+        A2UI.teksC("m_sub", subjudul, "body")
+    ];
+}
+
+fungsi NewAllMenuPlugin(manager) {
+    buat p = BASE.baru_base_plugin("AllMenu", "1.0.0", "ndlabs", "main", "Semua perintah bot dalam satu daftar");
+    p["GetCommands"] = fungsi() { hasil ["allmenu"]; };
+    p["Execute"] = fungsi(msg, args) {
+        buat res = MENU.buat_menu_teks(manager, ".", "MIAW BOT", waktu() - MULAI_BOT, kosong, kosong);
+        buat wa = msg["WA"];
+        jika tipe(wa) != "kosong" && wa.IsGrup {
+            coba {
+                buat sections = MENU.buat_menu_sections(manager, ".");
+                buat total = 0;
+                untuk (buat i = 0; i < panjang(sections); i = i + 1) { total = total + panjang(sections[i]["rows"]); }
+
+                buat komponen = _a2ui_komponen_judul("SEMUA PERINTAH", "Online · " + ke_teks(total) + " perintah siap pakai");
+                buat bt_list = A2UI.tombolList("📋 Lihat Semua", sections);
+
+                buat opsi = peta_baru();
+                opsi["footer"] = FOOTER_BOT;
+                opsi["tombol"] = [bt_list];
+                A2UI.kirim(wa, komponen, opsi);
+                hasil "";
+            } tangkap (e) {
+                cetak("[ALLMENU] Gagal kirim a2ui, jatuh ke teks: " + ke_teks(e));
+            }
+        }
+        msg["Reply"](res);
+        hasil res;
+    };
+    hasil p;
+}
+
+fungsi NewSubMenuPlugin(manager) {
+    buat p = BASE.baru_base_plugin("SubMenu", "1.0.0", "ndlabs", "main", "Daftar perintah per kategori, kaya game atau download");
+    p["GetCommands"] = fungsi() {
+        hasil ["mainmenu", "gamemenu", "downloadmenu", "grupmenu", "mediamenu", "testmenu", "debugmenu", "ownermenu", "lainmenu"];
+    };
+    p["Execute"] = fungsi(msg, args) {
+        buat teks_asli = msg["Text"];
+        buat nama_cmd = teks_asli;
+        jika panjang(nama_cmd) > 0 { nama_cmd = potong(nama_cmd, 1, panjang(nama_cmd)); }
+        untuk (buat i = 0; i < panjang(nama_cmd); i = i + 1) {
+            jika byte_di(nama_cmd, i) == 32 { nama_cmd = potong(nama_cmd, 0, i); berhenti; }
+        }
+
+        buat kategori = MENU.kategori_dari_perintah_menu(nama_cmd);
+        jika panjang(kategori) == 0 {
+            buat r0 = "Submenu gak dikenal. Ketik .menu buat liat daftar kategori.";
+            msg["Reply"](r0); hasil r0;
+        }
+
+        buat res = MENU.buat_submenu_teks(manager, ".", kategori, "MIAW BOT");
+        buat wa = msg["WA"];
+        jika tipe(wa) != "kosong" && wa.IsGrup {
+            coba {
+                buat sections = MENU.buat_submenu_sections(manager, ".", kategori);
+                jika panjang(sections) > 0 {
+                    buat total = 0;
+                    untuk (buat i = 0; i < panjang(sections); i = i + 1) { total = total + panjang(sections[i]["rows"]); }
+
+                    buat komponen = _a2ui_komponen_judul(MENU.label_kategori(kategori), ke_teks(total) + " perintah siap pakai");
+                    buat bt_list = A2UI.tombolList("📋 Lihat " + MENU.label_kategori(kategori), sections);
+
+                    buat opsi = peta_baru();
+                    opsi["footer"] = FOOTER_BOT;
+                    opsi["tombol"] = [bt_list];
+                    A2UI.kirim(wa, komponen, opsi);
+                    hasil "";
+                }
+            } tangkap (e) {
+                cetak("[SUBMENU] Gagal kirim a2ui, jatuh ke teks: " + ke_teks(e));
+            }
+        }
+        msg["Reply"](res);
+        hasil res;
+    };
+    hasil p;
+}

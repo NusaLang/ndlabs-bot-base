@@ -1,0 +1,112 @@
+fungsi _jid(usr, srv) {
+    buat j = peta_baru();
+    j["jid"] = benar; j["user"] = usr; j["server"] = srv; j["device"] = 0; j["agent"] = 0;
+    hasil j;
+}
+
+fungsi BuatNodePresenceUpdate(status, nama_push) {
+    buat attrs = peta_baru();
+    attrs["type"] = status;
+    jika tipe(nama_push) == "teks" && panjang(nama_push) > 0 {
+        attrs["name"] = nama_push;
+    }
+
+    buat node = peta_baru();
+    node["tag"] = "presence";
+    node["attrs"] = attrs;
+    node["children"] = [];
+    node["content"] = kosong;
+    node["ada_isi"] = salah;
+    hasil node;
+}
+
+fungsi buat_node_langganan_presence(target_user, target_server) {
+    buat attrs = peta_baru();
+    attrs["type"] = "subscribe";
+    attrs["to"] = _jid(target_user, target_server);
+
+    buat node = peta_baru();
+    node["tag"] = "presence";
+    node["attrs"] = attrs;
+    node["children"] = [];
+    node["content"] = kosong;
+    node["ada_isi"] = salah;
+    hasil node;
+}
+
+fungsi buat_node_chat_presence(target_user, target_server, status, media) {
+    jika status != "composing" && status != "paused" {
+        lempar "status chat presence harus composing/paused, dikasih: " + ke_teks(status);
+    }
+    buat st_attrs = peta_baru();
+    jika status == "composing" && tipe(media) == "teks" && panjang(media) > 0 {
+        st_attrs["media"] = media;
+    }
+    buat st = peta_baru();
+    st["tag"] = status;
+    st["attrs"] = st_attrs;
+    st["children"] = [];
+    st["content"] = kosong;
+    st["ada_isi"] = salah;
+
+    buat attrs = peta_baru();
+    attrs["to"] = _jid(target_user, target_server);
+
+    buat node = peta_baru();
+    node["tag"] = "chatstate";
+    node["attrs"] = attrs;
+    node["children"] = [st];
+    node["content"] = kosong;
+    node["ada_isi"] = benar;
+    hasil node;
+}
+
+fungsi urai_presence(node) {
+    buat r = peta_baru();
+    r["dari"] = node["attrs"]["from"];
+    r["offline"] = (node["attrs"]["type"] == "unavailable");
+    buat last = node["attrs"]["last"];
+    jika tipe(last) == "teks" && panjang(last) > 0 && last != "deny" { r["terakhir"] = last; }
+    hasil r;
+}
+
+fungsi urai_chat_presence(node) {
+    buat r = peta_baru();
+    r["dari"] = node["attrs"]["from"];
+    r["status"] = "";
+    r["media"] = "";
+    jika tipe(node["children"]) == "larik" && panjang(node["children"]) > 0 {
+        buat c = node["children"][0];
+        r["status"] = c["tag"];
+        jika tipe(c["attrs"]["media"]) == "teks" { r["media"] = c["attrs"]["media"]; }
+    }
+    hasil r;
+}
+
+fungsi buat_node_langganan_presence_token(target_user, target_server, tctoken) {
+    buat node = buat_node_langganan_presence(target_user, target_server);
+    jika tipe(tctoken) == "teks" && panjang(tctoken) > 0 {
+        buat t = peta_baru();
+        t["tag"] = "tctoken";
+        t["attrs"] = peta_baru();
+        t["children"] = [];
+        t["content"] = tctoken;
+        t["ada_isi"] = benar;
+        node["children"] = [t];
+        node["ada_isi"] = benar;
+    }
+    hasil node;
+}
+
+fungsi presence_aktif(status) {
+    hasil status == "available";
+}
+
+fungsi urai_chat_state(node) {
+    buat r = urai_chat_presence(node);
+    r["ok"] = salah;
+    jika tipe(node["children"]) == "larik" && panjang(node["children"]) == 1 {
+        jika r["status"] == "composing" || r["status"] == "paused" { r["ok"] = benar; }
+    }
+    hasil r;
+}

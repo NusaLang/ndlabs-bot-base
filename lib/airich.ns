@@ -1,0 +1,143 @@
+buat PB = impor("../nusantara_modules/hypermeow-ns/proto/pb.ns");
+buat CP = muat_plugin("crypto");
+
+buat _SIG_PREFIX = "NIXEL.MessageBuilderV4.7-VerificationSignature.Metadata";
+buat _CERT_PREFIX = "NIXEL.MessageBuilderV4.7-CertificateChain.Metadata";
+buat _BOT_JID = "867051314767696@bot";
+
+// Signature/certificateChain acak tiap panggil -- prefix ASCII tetap +
+// sisa byte acak, persis generateVerificationMetadata() aslinya (BUKAN
+// signature kriptografis beneran; WA gak verifikasi isinya sama sekali,
+// tapi kita samain ke pola aslinya biar gak ada satupun value statis).
+fungsi _verifikasi_acak() {
+    buat sig_bytes = _SIG_PREFIX + CP["hex_decode"](CP["acak_bytes_hex"](9));
+    buat cert1 = _CERT_PREFIX + CP["hex_decode"](CP["acak_bytes_hex"](634));
+    buat cert2 = _CERT_PREFIX + CP["hex_decode"](CP["acak_bytes_hex"](842));
+
+    buat proof = peta_baru();
+    proof["version"] = 1;
+    proof["useCase"] = "WA_BOT_MSG";
+    proof["signature"] = base64_encode(sig_bytes);
+    proof["certificateChain"] = [base64_encode(cert1), base64_encode(cert2)];
+
+    buat verif = peta_baru();
+    verif["proofs"] = [proof];
+    hasil verif;
+}
+
+fungsi uuid() {
+    buat h = CP["acak_bytes_hex"](16);
+    hasil potong(h, 0, 8) + "-" + potong(h, 8, 12) + "-4" + potong(h, 13, 16) + "-a" + potong(h, 17, 20) + "-" + potong(h, 20, 32);
+}
+
+fungsi bangun_rich_html(judul, html) {
+    buat prim = peta_baru();
+    prim["__typename"] = "GenAIaeacdsnwHtmlPrimitive";
+    prim["payload"] = html;
+    prim["trusted_sources"] = ["nixel.dev", "nusa.nd-labs.cloud", "id.akinator.com"];
+
+    buat vm = peta_baru();
+    vm["primitive"] = prim;
+    vm["__typename"] = "GenAISingleLayoutViewModel";
+
+    buat section = peta_baru();
+    section["view_model"] = vm;
+
+    buat payload = peta_baru();
+    payload["response_id"] = uuid();
+    payload["sections"] = [section];
+
+    buat data_b64 = base64_encode(json_encode(payload));
+
+    // certificateChainSki SENGAJA gak diisi -- pernah dicoba, malah bikin
+    // WA nampilin "WhatsApp tidak bisa memverifikasi keamanan media ini"
+    // (WA nyoba verifikasi chain-nya kalau field ini ada, dan gagal karena
+    // SKI-nya bukan dari certificate authority asli). Tanpa field ini WA
+    // gak nyoba verifikasi sama sekali, konten langsung render bersih.
+    buat verif = _verifikasi_acak();
+
+    buat cap_meta = peta_baru();
+    cap_meta["capabilities"] = ["AI_RICH_RESPONSE_ARTIFACTS_ENABLED", "UNIFIED_RESPONSE_EMBEDDED_SCREENS", "RICH_RESPONSE_UR_BLOKS_ENABLED"];
+
+    buat bot_meta = peta_baru();
+    bot_meta["messageDisclaimerText"] = "";
+    bot_meta["botResponseID"] = uuid();
+    bot_meta["verificationMetadata"] = verif;
+    bot_meta["capabilityMetadata"] = cap_meta;
+
+    buat mci = peta_baru();
+    mci["deviceListMetadata"] = peta_baru();
+    mci["deviceListMetadataVersion"] = 2;
+    mci["botMetadata"] = bot_meta;
+
+    buat fwd_info = peta_baru();
+    fwd_info["botJID"] = _BOT_JID;
+
+    buat ctx = peta_baru();
+    ctx["forwardingScore"] = 1;
+    ctx["isForwarded"] = benar;
+    ctx["forwardedAiBotMessageInfo"] = fwd_info;
+    ctx["forwardOrigin"] = "META_AI";
+    ctx["expiration"] = 3600;
+
+    buat submsg = peta_baru();
+    submsg["messageType"] = "AI_RICH_RESPONSE_TEXT";
+    submsg["messageText"] = judul;
+
+    buat unified = peta_baru();
+    unified["data"] = data_b64;
+
+    buat rich = peta_baru();
+    rich["messageType"] = "AI_RICH_RESPONSE_TYPE_STANDARD";
+    rich["submessages"] = [submsg];
+    rich["unifiedResponse"] = unified;
+    rich["contextInfo"] = ctx;
+
+    buat inner_msg = peta_baru();
+    inner_msg["richResponseMessage"] = rich;
+
+    buat fpm = peta_baru();
+    fpm["message"] = inner_msg;
+
+    buat msg = peta_baru();
+    msg["messageContextInfo"] = mci;
+    msg["botForwardedMessage"] = fpm;
+
+    hasil PB.PbEnkodeBernama(msg, "Message");
+}
+
+// Bangun wire lalu langsung kirim. Hasilnya msg_id -- simpen kalau nanti
+// mau di-edit-di-tempat lewat wa.Edit(msg_id, wire_baru) (liat
+// bangun_rich_html_edit di bawah), biar gak spam pesan baru tiap update.
+fungsi kirim_rich_html(wa, judul, html) {
+    buat wire = bangun_rich_html(judul, html);
+    hasil wa.KirimWireMentah(wire);
+}
+
+// Baca template HTML dari path_html, suntik `data` (di-JSON-encode) ke
+// marker "__NDLABS_DATA__" di dalamnya. Template tinggal punya baris
+// `const DATA = __NDLABS_DATA__;` di <script>.
+fungsi _suntik_data(path_html, data) {
+    buat html = baca_file(path_html);
+    buat bagian = pisah(html, "__NDLABS_DATA__");
+    jika panjang(bagian) != 2 { lempar "template " + path_html + " gak punya marker __NDLABS_DATA__"; }
+    hasil bagian[0] + json_encode(data) + bagian[1];
+}
+
+fungsi bangun_rich_html_data(judul, path_html, data) {
+    hasil bangun_rich_html(judul, _suntik_data(path_html, data));
+}
+
+fungsi kirim_rich_html_data(wa, judul, path_html, data) {
+    hasil kirim_rich_html(wa, judul, _suntik_data(path_html, data));
+}
+
+// Edit-di-tempat kartu rich-response yang udah pernah dikirim (msg_id
+// dari kirim_rich_html/kirim_rich_html_data) -- WAJIB dari grup yang sama
+// (wa.Edit cuma dukung grup, lihat client.ns). Dipakai buat game
+// interaktif (Akinator dkk) biar update pertanyaan gak numpuk pesan baru
+// tiap jawaban, cukup 1 kartu yang keupdate terus.
+fungsi edit_rich_html_data(wa, msg_id, judul, path_html, data) {
+    buat wire = bangun_rich_html_data(judul, path_html, data);
+    hasil wa.Edit(msg_id, wire);
+}

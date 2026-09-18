@@ -1,0 +1,226 @@
+buat PREKEY_JUMLAH_DIINGINKAN = 50;
+buat PREKEY_JUMLAH_MINIMAL = 5;
+buat PREKEY_JUMLAH_AWAL = 812;
+buat PREKEY_TIPE_DJB = 5;
+
+fungsi _prekeys_node(tag, attrs, children, content) {
+    buat n = peta_baru();
+    n["tag"] = tag;
+    jika tipe(attrs) == "peta" { n["attrs"] = attrs; } lain { n["attrs"] = peta_baru(); }
+    jika tipe(children) == "larik" { n["children"] = children; } lain { n["children"] = []; }
+    jika tipe(content) == "teks" { n["content"] = content; n["ada_isi"] = benar; }
+    lain jika panjang(n["children"]) > 0 { n["content"] = kosong; n["ada_isi"] = benar; }
+    lain { n["content"] = kosong; n["ada_isi"] = salah; }
+    hasil n;
+}
+
+fungsi _prekeys_jid(usr, srv, dev) {
+    buat j = peta_baru();
+    j["jid"] = benar; j["user"] = usr; j["server"] = srv; j["agent"] = 0;
+    jika tipe(dev) == "angka" { j["device"] = dev; } lain { j["device"] = 0; }
+    hasil j;
+}
+
+fungsi _prekeys_anak(node, tag) {
+    jika tipe(node["children"]) != "larik" { hasil kosong; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        jika node["children"][i]["tag"] == tag { hasil node["children"][i]; }
+    }
+    hasil kosong;
+}
+
+fungsi _prekeys_u24(v) {
+    buat b0 = (v - (v % 65536)) / 65536 % 256;
+    buat b1 = (v - (v % 256)) / 256 % 256;
+    buat b2 = v % 256;
+    hasil teks_dari(b0) + teks_dari(b1) + teks_dari(b2);
+}
+
+fungsi _prekeys_u32(v) {
+    buat b0 = (v - (v % 16777216)) / 16777216;
+    buat r0 = v % 16777216;
+    buat b1 = (r0 - (r0 % 65536)) / 65536;
+    buat r1 = r0 % 65536;
+    buat b2 = (r1 - (r1 % 256)) / 256;
+    buat b3 = r1 % 256;
+    hasil teks_dari(b0) + teks_dari(b1) + teks_dari(b2) + teks_dari(b3);
+}
+
+fungsi _prekeys_iq(req_id, tipe_iq, children) {
+    buat attrs = peta_baru();
+    attrs["id"] = req_id;
+    attrs["to"] = _prekeys_jid("", "s.whatsapp.net", 0);
+    attrs["type"] = tipe_iq;
+    attrs["xmlns"] = "encrypt";
+    hasil _prekeys_node("iq", attrs, children, kosong);
+}
+
+fungsi prekeys_buat_iq_hitung(req_id) {
+    hasil _prekeys_iq(req_id, "get", [_prekeys_node("count", peta_baru(), [], kosong)]);
+}
+
+fungsi prekeys_urai_hitung(resp_node) {
+    buat n = _prekeys_anak(resp_node, "count");
+    jika tipe(n) != "peta" { lempar "respons hitung prekey tanpa <count>"; }
+    jika tipe(n["attrs"]["value"]) != "teks" { lempar "atribut value gak ada di <count>"; }
+    hasil ke_angka(n["attrs"]["value"]);
+}
+
+fungsi prekeys_perlu_unggah(jumlah_lokal, jumlah_server) {
+    hasil jumlah_server < PREKEY_JUMLAH_MINIMAL || jumlah_lokal < PREKEY_JUMLAH_MINIMAL;
+}
+
+fungsi prekeys_jumlah_target(unggahan_awal) {
+    jika unggahan_awal == benar { hasil PREKEY_JUMLAH_AWAL; }
+    hasil PREKEY_JUMLAH_DIINGINKAN;
+}
+
+fungsi prekeys_buat_node_key(key_id, pub, signature) {
+    buat anak = [
+        _prekeys_node("id", peta_baru(), [], _prekeys_u24(key_id)),
+        _prekeys_node("value", peta_baru(), [], pub)
+    ];
+    jika tipe(signature) == "teks" && panjang(signature) > 0 {
+        tambah(anak, _prekeys_node("signature", peta_baru(), [], signature));
+        hasil _prekeys_node("skey", peta_baru(), anak, kosong);
+    }
+    hasil _prekeys_node("key", peta_baru(), anak, kosong);
+}
+
+fungsi prekeys_buat_iq_unggah(req_id, identity_pub, our_registration_id, daftar_prekey, signed_prekey) {
+    jika tipe(daftar_prekey) != "larik" || panjang(daftar_prekey) == 0 { lempar "daftar prekey kosong"; }
+    jika tipe(signed_prekey) != "peta" { lempar "signed prekey harus peta {id,pub,sig}"; }
+
+    buat anak_list = [];
+    untuk (buat i = 0; i < panjang(daftar_prekey); i = i + 1) {
+        buat p = daftar_prekey[i];
+        tambah(anak_list, prekeys_buat_node_key(p["id"], p["pub"], kosong));
+    }
+
+    buat isi = [
+        _prekeys_node("registration", peta_baru(), [], _prekeys_u32(our_registration_id)),
+        _prekeys_node("type", peta_baru(), [], teks_dari(PREKEY_TIPE_DJB)),
+        _prekeys_node("identity", peta_baru(), [], identity_pub),
+        _prekeys_node("list", peta_baru(), anak_list, kosong),
+        prekeys_buat_node_key(signed_prekey["id"], signed_prekey["pub"], signed_prekey["sig"])
+    ];
+    hasil _prekeys_iq(req_id, "set", isi);
+}
+
+fungsi prekeys_buat_iq_ambil(req_id, devices) {
+    jika tipe(devices) != "larik" || panjang(devices) == 0 { lempar "daftar device kosong buat fetch prekey"; }
+    buat anak_user = [];
+    untuk (buat i = 0; i < panjang(devices); i = i + 1) {
+        buat dv = devices[i];
+        buat ua = peta_baru();
+        ua["jid"] = _prekeys_jid(dv["user"], dv["server"], dv["device"]);
+        ua["reason"] = "identity";
+        tambah(anak_user, _prekeys_node("user", ua, [], kosong));
+    }
+    hasil _prekeys_iq(req_id, "get", [_prekeys_node("key", peta_baru(), anak_user, kosong)]);
+}
+
+fungsi prekeys_node_ke_prekey(node) {
+    buat r = peta_baru();
+    buat n_id = _prekeys_anak(node, "id");
+    jika tipe(n_id) != "peta" { lempar "node prekey tanpa tag id"; }
+    jika tipe(n_id["content"]) != "teks" || panjang(n_id["content"]) != 3 { lempar "id prekey harus 3 byte"; }
+    r["id"] = byte_di(n_id["content"], 0) * 65536 + byte_di(n_id["content"], 1) * 256 + byte_di(n_id["content"], 2);
+
+    buat n_val = _prekeys_anak(node, "value");
+    jika tipe(n_val) != "peta" { lempar "node prekey tanpa tag value"; }
+    jika panjang(n_val["content"]) != 32 { lempar "pubkey prekey harus 32 byte"; }
+    r["pub"] = n_val["content"];
+
+    jika node["tag"] == "skey" {
+        buat n_sig = _prekeys_anak(node, "signature");
+        jika tipe(n_sig) != "peta" { lempar "node skey tanpa tag signature"; }
+        jika panjang(n_sig["content"]) != 64 { lempar "signature prekey harus 64 byte"; }
+        r["sig"] = n_sig["content"];
+    }
+    hasil r;
+}
+
+fungsi prekeys_node_ke_bundle(device_id, node) {
+    buat n_err = _prekeys_anak(node, "error");
+    jika tipe(n_err) == "peta" {
+        lempar "server nolak prekey (kode " + ke_teks(n_err["attrs"]["code"]) + ")";
+    }
+
+    buat n_reg = _prekeys_anak(node, "registration");
+    jika tipe(n_reg) != "peta" || panjang(n_reg["content"]) != 4 { lempar "registration id gak valid di respons prekey"; }
+
+    buat sumber = node;
+    buat n_keys = _prekeys_anak(node, "keys");
+    jika tipe(n_keys) == "peta" { sumber = n_keys; }
+
+    buat n_ident = _prekeys_anak(sumber, "identity");
+    jika tipe(n_ident) != "peta" || panjang(n_ident["content"]) != 32 { lempar "identity key gak valid di respons prekey"; }
+
+    buat b = peta_baru();
+    b["ok"] = benar;
+    b["device"] = device_id;
+    b["reg_id"] = byte_di(n_reg["content"], 0) * 16777216
+        + byte_di(n_reg["content"], 1) * 65536
+        + byte_di(n_reg["content"], 2) * 256
+        + byte_di(n_reg["content"], 3);
+    b["identity_pub"] = n_ident["content"];
+
+    buat n_skey = _prekeys_anak(sumber, "skey");
+    jika tipe(n_skey) != "peta" { lempar "signed prekey gak ada di respons prekey"; }
+    buat sk = prekeys_node_ke_prekey(n_skey);
+    b["signed_prekey_id"] = sk["id"];
+    b["signed_prekey_pub"] = sk["pub"];
+    b["signed_prekey_sig"] = sk["sig"];
+
+    buat n_otp = _prekeys_anak(sumber, "key");
+    jika tipe(n_otp) == "peta" {
+        buat ok = prekeys_node_ke_prekey(n_otp);
+        b["onetime_prekey_id"] = ok["id"];
+        b["onetime_prekey_pub"] = ok["pub"];
+    }
+    hasil b;
+}
+
+fungsi prekeys_urai_respons(resp_node) {
+    buat r = peta_baru();
+    r["ok"] = salah;
+    r["bundles"] = [];
+    r["gagal"] = [];
+
+    buat n_list = _prekeys_anak(resp_node, "list");
+    jika tipe(n_list) != "peta" { hasil r; }
+    jika tipe(n_list["children"]) != "larik" { hasil r; }
+
+    untuk (buat i = 0; i < panjang(n_list["children"]); i = i + 1) {
+        buat c = n_list["children"][i];
+        jika c["tag"] != "user" { lanjut; }
+        buat jid = c["attrs"]["jid"];
+        buat dev = 0;
+        jika tipe(jid) == "peta" && tipe(jid["device"]) == "angka" { dev = jid["device"]; }
+        coba {
+            buat b = prekeys_node_ke_bundle(dev, c);
+            jika tipe(jid) == "peta" {
+                b["user"] = jid["user"];
+                b["server"] = jid["server"];
+            }
+            tambah(r["bundles"], b);
+        } tangkap (e) {
+            buat g = peta_baru();
+            g["jid"] = jid;
+            g["error"] = ke_teks(e);
+            tambah(r["gagal"], g);
+        }
+    }
+    jika panjang(r["bundles"]) > 0 { r["ok"] = benar; }
+    hasil r;
+}
+
+fungsi prekeys_cari_bundle(respons, user, device) {
+    jika tipe(respons) != "peta" || tipe(respons["bundles"]) != "larik" { hasil kosong; }
+    untuk (buat i = 0; i < panjang(respons["bundles"]); i = i + 1) {
+        buat b = respons["bundles"][i];
+        jika b["user"] == user && b["device"] == device { hasil b; }
+    }
+    hasil kosong;
+}

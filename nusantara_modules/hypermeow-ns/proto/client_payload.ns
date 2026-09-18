@@ -1,0 +1,89 @@
+buat PB = impor("pb.ns");
+buat CP = muat_plugin("crypto");
+
+fungsi enkode_web_info() {
+    buat web_info = [
+        PB.PbVarint(4, 0)
+    ];
+    hasil web_info;
+}
+
+fungsi _u32_be_hex(v) {
+    buat b0 = (v - (v % 16777216)) / 16777216;
+    buat r0 = v % 16777216;
+    buat b1 = (r0 - (r0 % 65536)) / 65536;
+    buat r1 = r0 % 65536;
+    buat b2 = (r1 - (r1 % 256)) / 256;
+    buat b3 = r1 % 256;
+    hasil CP["hex_encode"](teks_dari(b0) + teks_dari(b1) + teks_dari(b2) + teks_dari(b3));
+}
+
+fungsi _nama_perangkat(nama_device) {
+    jika tipe(nama_device) == "teks" && panjang(nama_device) > 0 { hasil nama_device; }
+    hasil "UwUchan";
+}
+
+fungsi BangunUserAgent(nama_device) {
+    buat nama = _nama_perangkat(nama_device);
+    buat appver = PB.PbVarint(1, 2) + PB.PbVarint(2, 3000) + PB.PbVarint(3, 1045305987);
+    buat f1 = PB.PbVarint(1, 14);
+    buat f2 = PB.PbBytes(2, appver);
+    buat f3 = PB.PbBytes(3, "000");
+    buat f4 = PB.PbBytes(4, "000");
+    buat f5 = PB.PbBytes(5, "0.1");
+    buat f6 = PB.PbBytes(6, "");
+    buat f7 = PB.PbBytes(7, nama);
+    buat f8 = PB.PbBytes(8, "0.1");
+    buat f10 = PB.PbVarint(10, 0);
+    buat f11 = PB.PbBytes(11, "en");
+    buat f12 = PB.PbBytes(12, "US");
+    hasil f1 + f2 + f3 + f4 + f5 + f6 + f7 + f8 + f10 + f11 + f12;
+}
+
+fungsi BangunDeviceProps(nama_device) {
+    buat nama = _nama_perangkat(nama_device);
+    buat f1 = PB.PbBytes(1, nama);
+    buat f2 = PB.PbBytes(2, CP["hex_decode"]("080010011800"));
+    buat f3 = PB.PbVarint(3, 0);
+    buat f4 = PB.PbVarint(4, 0);
+    buat f5 = PB.PbBytes(5, CP["hex_decode"]("188050200130013801400148015001580160017001780198013ca80101b00101"));
+    hasil f1 + f2 + f3 + f4 + f5;
+}
+
+fungsi EnkodeRegistrationClientPayload(reg_id, identity_pub, signed_prekey_id, signed_prekey_pub, signed_prekey_sig, nama_device) {
+
+    buat part1a_pre = "1800";
+    buat f_useragent = PB.PbBytes(5, BangunUserAgent(nama_device));
+    buat f_webinfo = PB.PbBytes(6, CP["hex_decode"]("2000"));
+    buat part1a_post = "600168019a01e1010a04";
+    buat part1a = part1a_pre + CP["hex_encode"](f_useragent) + CP["hex_encode"](f_webinfo) + part1a_post;
+    buat part1b = "1201051a20";
+    buat part1 = part1a + _u32_be_hex(reg_id) + part1b;
+    buat identity_hex = CP["hex_encode"](identity_pub);
+    buat part2 = "22030000012a20";
+    buat spk_pub_hex = CP["hex_encode"](signed_prekey_pub);
+    buat part3 = "3240";
+    buat spk_sig_hex = CP["hex_encode"](signed_prekey_sig);
+    buat f_rand = PB.PbBytes(7, CP["hex_decode"]("9fa53af9421567b114e33c9bb1ef7db2"));
+    buat f_deviceprops = PB.PbBytes(8, BangunDeviceProps(nama_device));
+    buat f_tail = PB.PbVarint(33, 0);
+    buat part4 = CP["hex_encode"](f_rand + f_deviceprops + f_tail);
+
+    buat full_hex = part1 + identity_hex + part2 + spk_pub_hex + part3 + spk_sig_hex + part4;
+    hasil CP["hex_decode"](full_hex);
+}
+
+fungsi EnkodeLoginClientPayload(user_num, device_num, nama_device) {
+    buat f_username = PB.PbVarint(1, user_num);
+    buat f_passive = PB.PbVarint(3, 1);
+    buat f_useragent = PB.PbBytes(5, BangunUserAgent(nama_device));
+    buat f_webinfo = PB.PbBytes(6, CP["hex_decode"]("2000"));
+    buat f_connecttype = PB.PbVarint(12, 1);
+    buat f_connectreason = PB.PbVarint(13, 1);
+    buat f_device = PB.PbVarint(18, device_num);
+    buat f_lc = PB.PbVarint(24, 1);
+    buat f_pull = PB.PbVarint(33, 1);
+    buat f_liddbmigrated = PB.PbVarint(41, 1);
+
+    hasil f_username + f_passive + f_useragent + f_webinfo + f_connecttype + f_connectreason + f_device + f_lc + f_pull + f_liddbmigrated;
+}

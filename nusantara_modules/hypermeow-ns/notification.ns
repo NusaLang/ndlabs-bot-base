@@ -1,0 +1,185 @@
+fungsi _peserta(child) {
+    buat out = [];
+    jika tipe(child["children"]) != "larik" { hasil out; }
+    untuk (buat i = 0; i < panjang(child["children"]); i = i + 1) {
+        buat p = child["children"][i];
+        jika p["tag"] != "participant" { lanjut; }
+        buat e = peta_baru();
+        e["jid"] = p["attrs"]["jid"];
+        e["lid"] = p["attrs"]["lid"];
+        e["pn"] = p["attrs"]["phone_number"];
+        e["error"] = p["attrs"]["error"];
+        tambah(out, e);
+    }
+    hasil out;
+}
+
+fungsi _isi_anak(node, tag) {
+    jika tipe(node["children"]) != "larik" { hasil kosong; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        jika node["children"][i]["tag"] == tag { hasil node["children"][i]; }
+    }
+    hasil kosong;
+}
+
+fungsi UraiNotifikasiGrup(node) {
+    buat e = peta_baru();
+    e["grup"] = node["attrs"]["from"];
+    e["pengirim"] = node["attrs"]["participant"];
+    e["pengirim_pn"] = node["attrs"]["participant_pn"];
+    e["notify"] = node["attrs"]["notify"];
+    e["waktu"] = node["attrs"]["t"];
+    e["aksi"] = [];
+
+    jika tipe(node["children"]) != "larik" { hasil e; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        buat c = node["children"][i];
+        buat t = c["tag"];
+
+        jika t == "add" {
+            e["gabung"] = _peserta(c);
+            e["alasan_gabung"] = c["attrs"]["reason"];
+            tambah(e["aksi"], "gabung");
+        }
+        jika t == "remove" {
+            e["keluar"] = _peserta(c);
+            tambah(e["aksi"], "keluar");
+        }
+        jika t == "promote" {
+            e["jadi_admin"] = _peserta(c);
+            tambah(e["aksi"], "promote");
+        }
+        jika t == "demote" {
+            e["turun_admin"] = _peserta(c);
+            tambah(e["aksi"], "demote");
+        }
+        jika t == "locked" {
+            e["terkunci"] = benar;
+            tambah(e["aksi"], "locked");
+        }
+        jika t == "unlocked" {
+            e["terkunci"] = salah;
+            tambah(e["aksi"], "unlocked");
+        }
+        jika t == "announcement" {
+            e["cuma_admin"] = benar;
+            tambah(e["aksi"], "announce");
+        }
+        jika t == "not_announcement" {
+            e["cuma_admin"] = salah;
+            tambah(e["aksi"], "not_announce");
+        }
+        jika t == "delete" {
+            e["dihapus"] = benar;
+            e["alasan_hapus"] = c["attrs"]["reason"];
+            tambah(e["aksi"], "delete");
+        }
+        jika t == "subject" {
+            e["nama_baru"] = c["attrs"]["subject"];
+            e["nama_diset_oleh"] = c["attrs"]["s_o"];
+            e["nama_diset_pada"] = c["attrs"]["s_t"];
+            tambah(e["aksi"], "subject");
+        }
+        jika t == "description" {
+            buat del = _isi_anak(c, "delete");
+            jika tipe(del) == "peta" {
+                e["deskripsi_baru"] = "";
+            } lain {
+                buat body = _isi_anak(c, "body");
+                jika tipe(body) == "peta" { e["deskripsi_baru"] = body["content"]; }
+            }
+            e["deskripsi_id"] = c["attrs"]["id"];
+            tambah(e["aksi"], "description");
+        }
+        jika t == "create" {
+            e["dibuat"] = benar;
+            tambah(e["aksi"], "create");
+        }
+        jika t == "ephemeral" {
+            e["pesan_sementara"] = c["attrs"]["expiration"];
+            tambah(e["aksi"], "ephemeral");
+        }
+        jika t == "not_ephemeral" {
+            e["pesan_sementara"] = "0";
+            tambah(e["aksi"], "not_ephemeral");
+        }
+        jika t == "membership_approval_mode" {
+            e["mode_persetujuan"] = benar;
+            tambah(e["aksi"], "approval_mode");
+        }
+        jika t == "member_add_mode" {
+            e["mode_tambah_anggota"] = c["content"];
+            tambah(e["aksi"], "member_add_mode");
+        }
+    }
+    hasil e;
+}
+
+fungsi UraiNotifikasiPerangkat(node) {
+    buat e = peta_baru();
+    e["dari"] = node["attrs"]["from"];
+    e["lid"] = node["attrs"]["lid"];
+    e["perubahan"] = [];
+    jika tipe(node["children"]) != "larik" { hasil e; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        buat c = node["children"][i];
+        jika c["tag"] != "add" && c["tag"] != "remove" && c["tag"] != "update" { lanjut; }
+        buat p = peta_baru();
+        p["aksi"] = c["tag"];
+        p["device_hash"] = c["attrs"]["device_hash"];
+        buat d = _isi_anak(c, "device");
+        jika tipe(d) == "peta" { p["device"] = d["attrs"]["jid"]; }
+        tambah(e["perubahan"], p);
+    }
+    hasil e;
+}
+
+fungsi UraiNotifikasiFoto(node) {
+    buat e = peta_baru();
+    e["dari"] = node["attrs"]["from"];
+    e["pengirim"] = node["attrs"]["participant"];
+    e["waktu"] = node["attrs"]["t"];
+    e["aksi"] = "";
+    buat set = _isi_anak(node, "set");
+    buat del = _isi_anak(node, "delete");
+    jika tipe(set) == "peta" {
+        e["aksi"] = "set";
+        e["foto_id"] = set["attrs"]["id"];
+    }
+    jika tipe(del) == "peta" { e["aksi"] = "hapus"; }
+    hasil e;
+}
+
+fungsi UraiNotifikasiEnkripsi(node) {
+    buat e = peta_baru();
+    e["dari"] = node["attrs"]["from"];
+    buat c = _isi_anak(node, "count");
+    jika tipe(c) == "peta" { e["sisa_prekey"] = ke_angka(c["attrs"]["value"]); }
+    hasil e;
+}
+
+fungsi RingkasNotifikasiGrup(e) {
+    buat pengirim = "";
+    jika tipe(e["notify"]) == "teks" && panjang(e["notify"]) > 0 { pengirim = e["notify"]; }
+    lain jika tipe(e["pengirim"]) == "peta" { pengirim = e["pengirim"]["user"]; }
+
+    buat baris = [];
+    untuk (buat i = 0; i < panjang(e["aksi"]); i = i + 1) {
+        buat a = e["aksi"][i];
+        jika a == "gabung" { tambah(baris, pengirim + " nambahin " + ke_teks(panjang(e["gabung"])) + " anggota"); }
+        jika a == "keluar" { tambah(baris, pengirim + " ngeluarin " + ke_teks(panjang(e["keluar"])) + " anggota"); }
+        jika a == "promote" { tambah(baris, pengirim + " jadiin admin " + ke_teks(panjang(e["jadi_admin"])) + " orang"); }
+        jika a == "demote" { tambah(baris, pengirim + " nurunin admin " + ke_teks(panjang(e["turun_admin"])) + " orang"); }
+        jika a == "subject" { tambah(baris, pengirim + " ganti nama grup jadi \"" + ke_teks(e["nama_baru"]) + "\""); }
+        jika a == "description" { tambah(baris, pengirim + " ganti deskripsi grup"); }
+        jika a == "locked" { tambah(baris, "grup dikunci (cuma admin yang bisa ubah info)"); }
+        jika a == "unlocked" { tambah(baris, "grup dibuka (semua bisa ubah info)"); }
+        jika a == "announce" { tambah(baris, "grup ditutup (cuma admin yang bisa kirim)"); }
+        jika a == "not_announce" { tambah(baris, "grup dibuka (semua bisa kirim)"); }
+        jika a == "create" { tambah(baris, "grup dibuat"); }
+        jika a == "delete" { tambah(baris, "grup dihapus"); }
+        jika a == "ephemeral" { tambah(baris, "pesan sementara diset " + ke_teks(e["pesan_sementara"]) + " detik"); }
+        jika a == "not_ephemeral" { tambah(baris, "pesan sementara dimatiin"); }
+    }
+    hasil baris;
+}

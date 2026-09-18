@@ -1,0 +1,270 @@
+buat LINK_BOT = "https://nd-labs.id";
+buat URUTAN_KATEGORI = ["main", "game", "download", "grup", "media", "test", "debug", "owner", "lain"];
+
+fungsi label_kategori(k) {
+    jika k == "main"     { hasil "UMUM"; }
+    jika k == "game"     { hasil "GAME"; }
+    jika k == "download" { hasil "DOWNLOAD"; }
+    jika k == "grup"     { hasil "GRUP"; }
+    jika k == "media"    { hasil "MEDIA"; }
+    jika k == "test"     { hasil "UJI COBA"; }
+    jika k == "debug"    { hasil "DEBUG"; }
+    jika k == "owner"    { hasil "OWNER"; }
+    hasil "LAINNYA";
+}
+
+fungsi _sudah_ada(daftar, nilai) {
+    untuk (buat i = 0; i < panjang(daftar); i = i + 1) {
+        jika daftar[i] == nilai { hasil benar; }
+    }
+    hasil salah;
+}
+
+fungsi _kumpulkan(manager) {
+    buat plugins = manager["GetAll"]();
+    buat per_kategori = peta_baru();
+
+    untuk (buat i = 0; i < panjang(plugins); i = i + 1) {
+        buat p = plugins[i];
+        jika tipe(p["IsHidden"]) == "fungsi" && p["IsHidden"]() { lanjut; }
+        buat kat = p["GetCategory"]();
+        jika tipe(kat) != "teks" || panjang(kat) == 0 { kat = "lain"; }
+        jika !_sudah_ada(URUTAN_KATEGORI, kat) { kat = "lain"; }
+        jika tipe(per_kategori[kat]) != "larik" { per_kategori[kat] = []; }
+        tambah(per_kategori[kat], p);
+    }
+    hasil per_kategori;
+}
+
+fungsi _baris_perintah(p, prefix) {
+    buat cmds = p["GetCommands"]();
+    buat utama = "";
+    buat alias = "";
+    jika panjang(cmds) > 0 { utama = prefix + cmds[0]; }
+    untuk (buat i = 1; i < panjang(cmds); i = i + 1) {
+        jika panjang(alias) > 0 { alias = alias + ", "; }
+        alias = alias + prefix + cmds[i];
+    }
+    buat baris = "  " + utama;
+    jika panjang(alias) > 0 { baris = baris + "  (" + alias + ")"; }
+    hasil baris;
+}
+
+fungsi _durasi(detik) {
+    jika tipe(detik) != "angka" || detik < 0 { hasil "-"; }
+    buat hari = (detik - (detik % 86400)) / 86400;
+    buat s1 = detik % 86400;
+    buat jam = (s1 - (s1 % 3600)) / 3600;
+    buat s2 = s1 % 3600;
+    buat menit = (s2 - (s2 % 60)) / 60;
+    jika hari > 0 { hasil ke_teks(hari) + "h " + ke_teks(jam) + "j " + ke_teks(menit) + "m"; }
+    jika jam > 0 { hasil ke_teks(jam) + "j " + ke_teks(menit) + "m"; }
+    hasil ke_teks(menit) + "m";
+}
+
+fungsi buat_menu_teks(manager, prefix, nama_bot, uptime_detik, footer, link_atas) {
+    buat per_kategori = _kumpulkan(manager);
+
+    buat total = 0;
+    untuk (buat i = 0; i < panjang(URUTAN_KATEGORI); i = i + 1) {
+        buat isi = per_kategori[URUTAN_KATEGORI[i]];
+        jika tipe(isi) != "larik" { lanjut; }
+        untuk (buat j = 0; j < panjang(isi); j = j + 1) {
+            total = total + panjang(isi[j]["GetCommands"]());
+        }
+    }
+
+    buat r = "";
+    jika tipe(link_atas) == "teks" && panjang(link_atas) > 0 { r = r + link_atas + "\n\n"; }
+    r = r + nama_bot + "\n";
+    r = r + "online · " + _durasi(uptime_detik) + " · " + ke_teks(total) + " perintah\n";
+
+    untuk (buat i = 0; i < panjang(URUTAN_KATEGORI); i = i + 1) {
+        buat kat = URUTAN_KATEGORI[i];
+        buat isi = per_kategori[kat];
+        jika tipe(isi) != "larik" || panjang(isi) == 0 { lanjut; }
+
+        r = r + "\n╭─ " + label_kategori(kat) + "\n";
+        untuk (buat j = 0; j < panjang(isi); j = j + 1) {
+            buat cmds = isi[j]["GetCommands"]();
+            untuk (buat c = 0; c < panjang(cmds); c = c + 1) {
+                r = r + "│ " + prefix + cmds[c] + "\n";
+            }
+        }
+        r = r + "╰────────\n";
+    }
+
+    r = r + "\n╭─ OWNER\n";
+    r = r + "│ > kode\n";
+    r = r + "│ $ perintah\n";
+    r = r + "╰────────\n";
+
+    r = r + "\n" + prefix + "help <perintah> — detail tiap perintah";
+    jika tipe(footer) == "teks" && panjang(footer) > 0 {
+        r = r + "\n\n────────────────\n" + footer;
+    }
+    hasil r;
+}
+
+fungsi buat_menu_sections(manager, prefix) {
+    buat per_kategori = _kumpulkan(manager);
+    buat sections = [];
+
+    untuk (buat i = 0; i < panjang(URUTAN_KATEGORI); i = i + 1) {
+        buat kat = URUTAN_KATEGORI[i];
+        buat isi = per_kategori[kat];
+        jika tipe(isi) != "larik" || panjang(isi) == 0 { lanjut; }
+
+        buat rows = [];
+        untuk (buat j = 0; j < panjang(isi); j = j + 1) {
+            buat p = isi[j];
+            buat cmds = p["GetCommands"]();
+            jika panjang(cmds) == 0 { lanjut; }
+            buat row = peta_baru();
+            row["title"] = prefix + cmds[0];
+            row["description"] = p["GetDescription"]();
+            row["id"] = prefix + cmds[0];
+            tambah(rows, row);
+        }
+        jika panjang(rows) == 0 { lanjut; }
+
+        buat sec = peta_baru();
+        sec["title"] = label_kategori(kat);
+        sec["rows"] = rows;
+        tambah(sections, sec);
+    }
+    hasil sections;
+}
+
+fungsi kategori_dari_perintah_menu(nama_cmd) {
+    jika tipe(nama_cmd) != "teks" { hasil ""; }
+    buat n = panjang(nama_cmd);
+    jika n <= 4 || potong(nama_cmd, n - 4, n) != "menu" { hasil ""; }
+    buat kode = potong(nama_cmd, 0, n - 4);
+    jika !_sudah_ada(URUTAN_KATEGORI, kode) { hasil ""; }
+    hasil kode;
+}
+
+fungsi ringkasan_kategori(manager) {
+    buat per_kategori = _kumpulkan(manager);
+    buat hasil_list = [];
+    untuk (buat i = 0; i < panjang(URUTAN_KATEGORI); i = i + 1) {
+        buat kat = URUTAN_KATEGORI[i];
+        buat isi = per_kategori[kat];
+        jika tipe(isi) != "larik" || panjang(isi) == 0 { lanjut; }
+        buat jumlah = 0;
+        untuk (buat j = 0; j < panjang(isi); j = j + 1) { jumlah = jumlah + panjang(isi[j]["GetCommands"]()); }
+        buat row = peta_baru();
+        row["kode"] = kat;
+        row["label"] = label_kategori(kat);
+        row["jumlah"] = jumlah;
+        tambah(hasil_list, row);
+    }
+    hasil hasil_list;
+}
+
+fungsi buat_ringkasan_teks(manager, prefix, nama_bot, uptime_detik) {
+    buat ringkasan = ringkasan_kategori(manager);
+    buat total = 0;
+    untuk (buat i = 0; i < panjang(ringkasan); i = i + 1) { total = total + ringkasan[i]["jumlah"]; }
+
+    buat r = nama_bot + "\n";
+    r = r + "online · " + _durasi(uptime_detik) + " · " + ke_teks(total) + " perintah\n\n";
+    untuk (buat i = 0; i < panjang(ringkasan); i = i + 1) {
+        r = r + "▸ " + ringkasan[i]["label"] + "  (" + ke_teks(ringkasan[i]["jumlah"]) + ") — ketik " + prefix + ringkasan[i]["kode"] + "menu\n";
+    }
+    r = r + "\n" + prefix + "allmenu — semua perintah sekaligus\n";
+    r = r + prefix + "menu <perintah> — detail satu perintah";
+    hasil r;
+}
+
+fungsi buat_ringkasan_sections(manager, prefix) {
+    buat ringkasan = ringkasan_kategori(manager);
+    buat rows = [];
+    untuk (buat i = 0; i < panjang(ringkasan); i = i + 1) {
+        buat row = peta_baru();
+        row["title"] = ringkasan[i]["label"];
+        row["description"] = ke_teks(ringkasan[i]["jumlah"]) + " perintah";
+        row["id"] = prefix + ringkasan[i]["kode"] + "menu";
+        tambah(rows, row);
+    }
+    buat row_all = peta_baru();
+    row_all["title"] = "📜 SEMUA PERINTAH";
+    row_all["description"] = "Daftar lengkap tanpa kategori";
+    row_all["id"] = prefix + "allmenu";
+    tambah(rows, row_all);
+
+    buat sec = peta_baru();
+    sec["title"] = "Kategori";
+    sec["rows"] = rows;
+    hasil [sec];
+}
+
+fungsi buat_submenu_teks(manager, prefix, kategori, nama_bot) {
+    buat per_kategori = _kumpulkan(manager);
+    buat isi = per_kategori[kategori];
+    jika tipe(isi) != "larik" || panjang(isi) == 0 {
+        hasil nama_bot + " · " + label_kategori(kategori) + "\n\nBelum ada perintah di kategori ini.";
+    }
+
+    buat total = 0;
+    untuk (buat j = 0; j < panjang(isi); j = j + 1) { total = total + panjang(isi[j]["GetCommands"]()); }
+
+    buat r = nama_bot + " · " + label_kategori(kategori) + "\n";
+    r = r + ke_teks(total) + " perintah\n\n";
+    untuk (buat j = 0; j < panjang(isi); j = j + 1) {
+        buat p = isi[j];
+        buat cmds = p["GetCommands"]();
+        jika panjang(cmds) == 0 { lanjut; }
+        r = r + "▸ " + prefix + cmds[0];
+        untuk (buat c = 1; c < panjang(cmds); c = c + 1) { r = r + ", " + prefix + cmds[c]; }
+        buat desk = p["GetDescription"]();
+        jika tipe(desk) == "teks" && panjang(desk) > 0 { r = r + "\n  " + desk; }
+        r = r + "\n";
+    }
+    r = r + "\n" + prefix + "menu — balik ke menu utama";
+    hasil r;
+}
+
+fungsi buat_submenu_sections(manager, prefix, kategori) {
+    buat per_kategori = _kumpulkan(manager);
+    buat isi = per_kategori[kategori];
+    jika tipe(isi) != "larik" || panjang(isi) == 0 { hasil []; }
+
+    buat rows = [];
+    untuk (buat j = 0; j < panjang(isi); j = j + 1) {
+        buat p = isi[j];
+        buat cmds = p["GetCommands"]();
+        jika panjang(cmds) == 0 { lanjut; }
+        buat row = peta_baru();
+        row["title"] = prefix + cmds[0];
+        row["description"] = p["GetDescription"]();
+        row["id"] = prefix + cmds[0];
+        tambah(rows, row);
+    }
+    jika panjang(rows) == 0 { hasil []; }
+
+    buat sec = peta_baru();
+    sec["title"] = label_kategori(kategori);
+    sec["rows"] = rows;
+    hasil [sec];
+}
+
+fungsi buat_detail_perintah(manager, prefix, nama_perintah) {
+    buat p = manager["GetCommand"](nama_perintah);
+    jika tipe(p) == "kosong" {
+        hasil "Perintah `" + prefix + nama_perintah + "` gak ada. Ketik " + prefix + "help buat daftar lengkap.";
+    }
+    buat cmds = p["GetCommands"]();
+    buat r = "▸ *" + p["GetName"]() + "* v" + p["GetVersion"]() + "\n\n";
+    r = r + "Kategori  : " + label_kategori(p["GetCategory"]()) + "\n";
+    r = r + "Perintah  : ";
+    untuk (buat i = 0; i < panjang(cmds); i = i + 1) {
+        jika i > 0 { r = r + ", "; }
+        r = r + prefix + cmds[i];
+    }
+    r = r + "\n";
+    jika p["IsOwnerOnly"]() { r = r + "Akses     : owner doang\n"; }
+    r = r + "\n" + p["GetDescription"]();
+    hasil r;
+}

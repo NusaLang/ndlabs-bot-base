@@ -1,0 +1,379 @@
+buat SERVER_GRUP = "g.us";
+
+fungsi _jid(usr, srv) {
+    buat j = peta_baru();
+    j["jid"] = benar; j["user"] = usr; j["server"] = srv; j["device"] = 0; j["agent"] = 0;
+    hasil j;
+}
+
+fungsi _node(tag, attrs, children, content) {
+    buat n = peta_baru();
+    n["tag"] = tag;
+    jika tipe(attrs) == "peta" { n["attrs"] = attrs; } lain { n["attrs"] = peta_baru(); }
+    jika tipe(children) == "larik" { n["children"] = children; } lain { n["children"] = []; }
+    jika tipe(content) == "teks" { n["content"] = content; n["ada_isi"] = benar; }
+    lain jika panjang(n["children"]) > 0 { n["content"] = kosong; n["ada_isi"] = benar; }
+    lain { n["content"] = kosong; n["ada_isi"] = salah; }
+    hasil n;
+}
+
+fungsi _iq_grup(req_id, tujuan_jid, tipe_iq, isi_node) {
+    buat attrs = peta_baru();
+    attrs["id"] = req_id;
+    attrs["to"] = tujuan_jid;
+    attrs["type"] = tipe_iq;
+    attrs["xmlns"] = "w:g2";
+    hasil _node("iq", attrs, [isi_node], kosong);
+}
+
+fungsi BuatNodeDapatkanInfoGrup(req_id, group_user) {
+    buat qa = peta_baru(); qa["request"] = "interactive";
+    hasil _iq_grup(req_id, _jid(group_user, SERVER_GRUP), "get", _node("query", qa, [], kosong));
+}
+
+fungsi BuatNodeBuatGrup(req_id, nama_grup, participant_users) {
+    buat anak = [];
+    untuk (buat i = 0; i < panjang(participant_users); i = i + 1) {
+        buat pa = peta_baru();
+        pa["jid"] = _jid(participant_users[i], "s.whatsapp.net");
+        tambah(anak, _node("participant", pa, [], kosong));
+    }
+    tambah(anak, _node("member_add_mode", peta_baru(), [], "all_member_add"));
+
+    buat ca = peta_baru();
+    ca["subject"] = nama_grup;
+    ca["key"] = ke_teks(waktu());
+    hasil _iq_grup(req_id, _jid("", SERVER_GRUP), "set", _node("create", ca, anak, kosong));
+}
+
+fungsi BuatNodeKeluarGrup(req_id, group_user) {
+    buat ga = peta_baru(); ga["id"] = _jid(group_user, SERVER_GRUP);
+    buat grup = _node("group", ga, [], kosong);
+    hasil _iq_grup(req_id, _jid("", SERVER_GRUP), "set", _node("leave", peta_baru(), [grup], kosong));
+}
+
+fungsi buat_node_ubah_peserta(req_id, group_user, participant_users, aksi) {
+    jika aksi != "add" && aksi != "remove" && aksi != "promote" && aksi != "demote" {
+        lempar "aksi peserta harus add/remove/promote/demote, dikasih: " + ke_teks(aksi);
+    }
+    buat anak = [];
+    untuk (buat i = 0; i < panjang(participant_users); i = i + 1) {
+        buat pa = peta_baru();
+        pa["jid"] = _jid(participant_users[i], "s.whatsapp.net");
+        tambah(anak, _node("participant", pa, [], kosong));
+    }
+    hasil _iq_grup(req_id, _jid(group_user, SERVER_GRUP), "set", _node(aksi, peta_baru(), anak, kosong));
+}
+
+fungsi BuatNodeUbahPesertaJid(req_id, group_user, target_list, aksi) {
+    jika aksi != "add" && aksi != "remove" && aksi != "promote" && aksi != "demote" {
+        lempar "aksi peserta harus add/remove/promote/demote, dikasih: " + ke_teks(aksi);
+    }
+    buat anak = [];
+    untuk (buat i = 0; i < panjang(target_list); i = i + 1) {
+        buat t = target_list[i];
+        buat pa = peta_baru();
+        pa["jid"] = _jid(t["user"], t["server"]);
+        tambah(anak, _node("participant", pa, [], kosong));
+    }
+    hasil _iq_grup(req_id, _jid(group_user, SERVER_GRUP), "set", _node(aksi, peta_baru(), anak, kosong));
+}
+
+fungsi BuatNodeSetNamaGrup(req_id, group_user, nama) {
+    hasil _iq_grup(req_id, _jid(group_user, SERVER_GRUP), "set", _node("subject", peta_baru(), [], nama));
+}
+
+fungsi BuatNodeSetDeskripsiGrup(req_id, group_user, deskripsi, prev_id, new_id) {
+    buat da = peta_baru();
+    da["id"] = new_id;
+    jika tipe(prev_id) == "teks" && panjang(prev_id) > 0 { da["prev"] = prev_id; }
+    buat anak = [];
+    jika tipe(deskripsi) == "teks" && panjang(deskripsi) > 0 {
+        tambah(anak, _node("body", peta_baru(), [], deskripsi));
+    } lain {
+        da["delete"] = "true";
+    }
+    hasil _iq_grup(req_id, _jid(group_user, SERVER_GRUP), "set", _node("description", da, anak, kosong));
+}
+
+fungsi BuatNodeSetGrupTerkunci(req_id, group_user, terkunci) {
+    buat tag = "unlocked";
+    jika terkunci { tag = "locked"; }
+    hasil _iq_grup(req_id, _jid(group_user, SERVER_GRUP), "set", _node(tag, peta_baru(), [], kosong));
+}
+
+fungsi BuatNodeSetGroupAnnounce(req_id, group_user, cuma_admin) {
+    buat tag = "not_announcement";
+    jika cuma_admin { tag = "announcement"; }
+    hasil _iq_grup(req_id, _jid(group_user, SERVER_GRUP), "set", _node(tag, peta_baru(), [], kosong));
+}
+
+fungsi BuatNodeLinkUndangan(req_id, group_user, reset) {
+    buat t = "get";
+    jika reset { t = "set"; }
+    hasil _iq_grup(req_id, _jid(group_user, SERVER_GRUP), t, _node("invite", peta_baru(), [], kosong));
+}
+
+fungsi BuatNodeGabungLewatLink(req_id, kode) {
+    buat ia = peta_baru(); ia["code"] = kode;
+    hasil _iq_grup(req_id, _jid("", SERVER_GRUP), "set", _node("invite", ia, [], kosong));
+}
+
+fungsi BuatNodeDaftarGrup(req_id) {
+    buat anak = [_node("participants", peta_baru(), [], kosong), _node("description", peta_baru(), [], kosong)];
+    hasil _iq_grup(req_id, _jid("", SERVER_GRUP), "get", _node("participating", peta_baru(), anak, kosong));
+}
+
+fungsi buat_node_set_mode_tambah_anggota(req_id, group_user, mode) {
+    hasil _iq_grup(req_id, _jid(group_user, SERVER_GRUP), "set", _node("member_add_mode", peta_baru(), [], mode));
+}
+
+fungsi UraiLinkUndangan(node) {
+    buat r = peta_baru(); r["ok"] = salah;
+    jika tipe(node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        buat c = node["children"][i];
+        jika c["tag"] == "invite" && tipe(c["attrs"]["code"]) == "teks" {
+            r["ok"] = benar;
+            r["kode"] = c["attrs"]["code"];
+            r["link"] = "https://chat.whatsapp.com/" + c["attrs"]["code"];
+            hasil r;
+        }
+    }
+    hasil r;
+}
+
+fungsi UraiDaftarGrup(node) {
+    buat r = peta_baru(); r["ok"] = salah; r["grup"] = [];
+    jika tipe(node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        jika node["children"][i]["tag"] != "groups" { lanjut; }
+        buat gs = node["children"][i]["children"];
+        jika tipe(gs) != "larik" { lanjut; }
+        untuk (buat j = 0; j < panjang(gs); j = j + 1) {
+            buat g = gs[j];
+            jika g["tag"] != "group" { lanjut; }
+            buat e = peta_baru();
+            e["id"] = g["attrs"]["id"];
+            e["pembuat"] = g["attrs"]["creator"];
+            e["dibuat"] = g["attrs"]["creation"];
+            e["nama"] = "";
+            jika tipe(g["attrs"]["subject"]) == "teks" { e["nama"] = g["attrs"]["subject"]; }
+            e["jumlah_peserta"] = 0;
+            jika tipe(g["attrs"]["size"]) == "teks" {
+                coba { e["jumlah_peserta"] = ke_angka(g["attrs"]["size"]); } tangkap (err) {}
+            }
+            jika e["jumlah_peserta"] == 0 && tipe(g["children"]) == "larik" {
+                untuk (buat c2 = 0; c2 < panjang(g["children"]); c2 = c2 + 1) {
+                    jika g["children"][c2]["tag"] == "participant" { e["jumlah_peserta"] = e["jumlah_peserta"] + 1; }
+                }
+            }
+            tambah(r["grup"], e);
+        }
+        r["ok"] = benar;
+    }
+    hasil r;
+}
+
+fungsi buat_node_dapatkan_permintaan_peserta(req_id, group_user) {
+    hasil _iq_grup(req_id, _jid(group_user, SERVER_GRUP), "get", _node("membership_approval_requests", peta_baru(), [], kosong));
+}
+
+fungsi buat_node_gabung_grup_dgn_undangan(req_id, group_user, inviter_user, inviter_server, kode, expiration) {
+    buat aa = peta_baru();
+    aa["code"] = kode;
+    aa["expiration"] = ke_teks(expiration);
+    aa["admin"] = _jid(inviter_user, inviter_server);
+    hasil _iq_grup(req_id, _jid(group_user, SERVER_GRUP), "set", _node("accept", aa, [], kosong));
+}
+
+fungsi buat_node_hubungkan_grup(req_id, parent_user, child_user) {
+    buat ga = peta_baru(); ga["jid"] = _jid(child_user, SERVER_GRUP);
+    buat la = peta_baru(); la["link_type"] = "sub";
+    buat link = _node("link", la, [_node("group", ga, [], kosong)], kosong);
+    hasil _iq_grup(req_id, _jid(parent_user, SERVER_GRUP), "set", _node("links", peta_baru(), [link], kosong));
+}
+
+fungsi buat_node_info_grup_dari_undangan(req_id, group_user, inviter_user, inviter_server, kode, expiration) {
+    buat aa = peta_baru();
+    aa["code"] = kode;
+    aa["expiration"] = ke_teks(expiration);
+    aa["admin"] = _jid(inviter_user, inviter_server);
+    buat isi = _node("query", peta_baru(), [_node("add_request", aa, [], kosong)], kosong);
+    hasil _iq_grup(req_id, _jid(group_user, SERVER_GRUP), "get", isi);
+}
+
+fungsi buat_node_peserta_grup_terhubung(req_id, community_user) {
+    hasil _iq_grup(req_id, _jid(community_user, SERVER_GRUP), "get", _node("linked_groups_participants", peta_baru(), [], kosong));
+}
+
+fungsi buat_node_putuskan_grup(req_id, parent_user, child_user) {
+    buat ga = peta_baru(); ga["jid"] = _jid(child_user, SERVER_GRUP);
+    buat ua = peta_baru(); ua["unlink_type"] = "sub";
+    hasil _iq_grup(req_id, _jid(parent_user, SERVER_GRUP), "set", _node("unlink", ua, [_node("group", ga, [], kosong)], kosong));
+}
+
+fungsi buat_node_set_foto_grup(req_id, group_user, avatar_bytes) {
+    buat anak = [];
+    jika tipe(avatar_bytes) == "teks" && panjang(avatar_bytes) > 0 {
+        buat pa = peta_baru(); pa["type"] = "image";
+        tambah(anak, _node("picture", pa, [], avatar_bytes));
+    }
+    buat a = peta_baru();
+    a["id"] = req_id; a["to"] = _jid("", "s.whatsapp.net"); a["target"] = _jid(group_user, SERVER_GRUP);
+    a["type"] = "set"; a["xmlns"] = "w:profile:picture";
+    hasil _node("iq", a, anak, kosong);
+}
+
+fungsi buat_node_set_mode_persetujuan_gabung(req_id, group_user, aktif) {
+    buat mode_str = "off";
+    jika aktif { mode_str = "on"; }
+    buat ga = peta_baru(); ga["state"] = mode_str;
+    buat isi = _node("membership_approval_mode", peta_baru(), [_node("group_join", ga, [], kosong)], kosong);
+    hasil _iq_grup(req_id, _jid(group_user, SERVER_GRUP), "set", isi);
+}
+
+fungsi buat_node_sub_grup(req_id, community_user) {
+    hasil _iq_grup(req_id, _jid(community_user, SERVER_GRUP), "get", _node("sub_groups", peta_baru(), [], kosong));
+}
+
+fungsi buat_node_ubah_permintaan_peserta(req_id, group_user, target_list, aksi) {
+    jika aksi != "approve" && aksi != "reject" { lempar "aksi permintaan peserta harus approve/reject"; }
+    buat anak = [];
+    untuk (buat i = 0; i < panjang(target_list); i = i + 1) {
+        buat t = target_list[i];
+        buat pa = peta_baru();
+        pa["jid"] = _jid(t["user"], t["server"]);
+        tambah(anak, _node("participant", pa, [], kosong));
+    }
+    buat aksi_node = _node(aksi, peta_baru(), anak, kosong);
+    hasil _iq_grup(req_id, _jid(group_user, SERVER_GRUP), "set", _node("membership_requests_action", peta_baru(), [aksi_node], kosong));
+}
+
+fungsi urai_respons_info_grup_dari_undangan(node) {
+    buat r = peta_baru(); r["ok"] = salah;
+    jika tipe(node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        buat g = node["children"][i];
+        jika g["tag"] != "group" { lanjut; }
+        r["ok"] = benar;
+        r["id"] = g["attrs"]["id"];
+        r["pembuat"] = g["attrs"]["creator"];
+        r["dibuat"] = g["attrs"]["creation"];
+        r["nama"] = "";
+        jika tipe(g["attrs"]["subject"]) == "teks" { r["nama"] = g["attrs"]["subject"]; }
+        r["jumlah_peserta"] = 0;
+        jika tipe(g["children"]) == "larik" {
+            untuk (buat c = 0; c < panjang(g["children"]); c = c + 1) {
+                jika g["children"][c]["tag"] == "participant" { r["jumlah_peserta"] = r["jumlah_peserta"] + 1; }
+            }
+        }
+        hasil r;
+    }
+    hasil r;
+}
+
+fungsi urai_respons_permintaan_peserta(node) {
+    buat r = peta_baru(); r["ok"] = salah; r["peserta"] = [];
+    jika tipe(node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        jika node["children"][i]["tag"] != "membership_approval_requests" { lanjut; }
+        buat reqs = node["children"][i]["children"];
+        jika tipe(reqs) != "larik" { lanjut; }
+        untuk (buat j = 0; j < panjang(reqs); j = j + 1) {
+            jika reqs[j]["tag"] != "membership_approval_request" { lanjut; }
+            buat e = peta_baru();
+            e["jid"] = reqs[j]["attrs"]["jid"];
+            e["waktu_minta"] = 0;
+            jika tipe(reqs[j]["attrs"]["request_time"]) == "teks" {
+                coba { e["waktu_minta"] = ke_angka(reqs[j]["attrs"]["request_time"]); } tangkap (err) {}
+            }
+            tambah(r["peserta"], e);
+        }
+        r["ok"] = benar;
+    }
+    hasil r;
+}
+
+fungsi urai_respons_peserta_grup_terhubung(node) {
+    buat r = peta_baru(); r["ok"] = salah; r["jid"] = [];
+    jika tipe(node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        jika node["children"][i]["tag"] != "linked_groups_participants" { lanjut; }
+        buat ps = node["children"][i]["children"];
+        jika tipe(ps) != "larik" { lanjut; }
+        untuk (buat j = 0; j < panjang(ps); j = j + 1) {
+            jika ps[j]["tag"] == "participant" && tipe(ps[j]["attrs"]["jid"]) == "peta" {
+                tambah(r["jid"], ps[j]["attrs"]["jid"]);
+            }
+        }
+        r["ok"] = benar;
+    }
+    hasil r;
+}
+
+fungsi urai_respons_set_foto_grup(node) {
+    buat r = peta_baru(); r["ok"] = salah; r["foto_id"] = "";
+    jika tipe(node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        buat c = node["children"][i];
+        jika c["tag"] == "picture" {
+            r["ok"] = benar;
+            jika tipe(c["attrs"]["id"]) == "teks" { r["foto_id"] = c["attrs"]["id"]; }
+            hasil r;
+        }
+    }
+    hasil r;
+}
+
+fungsi urai_respons_sub_grup(node) {
+    buat r = peta_baru(); r["ok"] = salah; r["grup"] = [];
+    jika tipe(node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        jika node["children"][i]["tag"] != "sub_groups" { lanjut; }
+        buat gs = node["children"][i]["children"];
+        jika tipe(gs) != "larik" { lanjut; }
+        untuk (buat j = 0; j < panjang(gs); j = j + 1) {
+            buat g = gs[j];
+            jika g["tag"] != "group" { lanjut; }
+            buat e = peta_baru();
+            jika tipe(g["attrs"]["jid"]) == "peta" { e["jid"] = g["attrs"]["jid"]; }
+            lain { e["jid"] = _jid(g["attrs"]["id"], SERVER_GRUP); }
+            e["nama"] = "";
+            jika tipe(g["attrs"]["subject"]) == "teks" { e["nama"] = g["attrs"]["subject"]; }
+            e["default_sub_grup"] = salah;
+            jika tipe(g["children"]) == "larik" {
+                untuk (buat c = 0; c < panjang(g["children"]); c = c + 1) {
+                    jika g["children"][c]["tag"] == "default_sub_group" { e["default_sub_grup"] = benar; }
+                }
+            }
+            tambah(r["grup"], e);
+        }
+        r["ok"] = benar;
+    }
+    hasil r;
+}
+
+fungsi urai_respons_ubah_permintaan_peserta(node, aksi) {
+    buat r = peta_baru(); r["ok"] = salah; r["peserta"] = [];
+    jika tipe(node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        jika node["children"][i]["tag"] != "membership_requests_action" { lanjut; }
+        buat aksi_children = node["children"][i]["children"];
+        jika tipe(aksi_children) != "larik" { lanjut; }
+        untuk (buat j = 0; j < panjang(aksi_children); j = j + 1) {
+            jika aksi_children[j]["tag"] != aksi { lanjut; }
+            buat parts = aksi_children[j]["children"];
+            jika tipe(parts) != "larik" { lanjut; }
+            untuk (buat p = 0; p < panjang(parts); p = p + 1) {
+                jika parts[p]["tag"] == "participant" {
+                    buat e = peta_baru();
+                    e["jid"] = parts[p]["attrs"]["jid"];
+                    tambah(r["peserta"], e);
+                }
+            }
+            r["ok"] = benar;
+        }
+    }
+    hasil r;
+}

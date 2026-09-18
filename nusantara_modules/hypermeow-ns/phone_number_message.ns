@@ -1,0 +1,32 @@
+buat PB = impor("proto/pb.ns");
+buat MS = impor("msgsend.ns");
+
+buat PNMSG_TAG_PROTOCOL = 12;
+buat PNMSG_TAG_REQUEST  = 54;
+buat PNMSG_TIPE_SHARE_PHONE_NUMBER = 11;
+
+fungsi pnmsg_bangun_minta_nomor(kutip) {
+    buat isi = "";
+    buat ci = MS.BangunContextInfo(kutip);
+    jika panjang(ci) > 0 { isi = isi + PB.PbBytes(1, ci); }
+    hasil PB.PbBytes(PNMSG_TAG_REQUEST, isi);
+}
+
+fungsi pnmsg_bangun_bagikan_nomor() {
+    buat pm = PB.PbVarint(2, PNMSG_TIPE_SHARE_PHONE_NUMBER);
+    hasil PB.PbBytes(PNMSG_TAG_PROTOCOL, pm);
+}
+
+fungsi pnmsg_adalah_minta_nomor(wire) {
+    jika tipe(wire) != "teks" { hasil salah; }
+    buat m = PB.PbDekode(wire);
+    hasil tipe(m[ke_teks(PNMSG_TAG_REQUEST)]) == "teks";
+}
+
+fungsi pnmsg_adalah_bagikan_nomor(wire) {
+    jika tipe(wire) != "teks" { hasil salah; }
+    buat m = PB.PbDekode(wire);
+    jika tipe(m[ke_teks(PNMSG_TAG_PROTOCOL)]) != "teks" { hasil salah; }
+    buat pm = PB.PbDekode(m[ke_teks(PNMSG_TAG_PROTOCOL)]);
+    hasil pm["2"] == PNMSG_TIPE_SHARE_PHONE_NUMBER;
+}

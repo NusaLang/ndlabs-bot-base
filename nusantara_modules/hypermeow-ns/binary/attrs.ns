@@ -1,0 +1,109 @@
+
+fungsi au_baru(attrs) {
+    buat au = peta_baru();
+    au["attrs"] = attrs;
+    au["errors"] = [];
+    hasil au;
+}
+
+fungsi au_get_string(au, key, wajib) {
+    buat r = peta_baru();
+    jika tipe(au["attrs"][key]) != "teks" {
+        jika wajib { tambah(au["errors"], "atribut wajib '" + key + "' tidak ditemukan"); }
+        r["ok"] = salah; r["val"] = "";
+        hasil r;
+    }
+    r["ok"] = benar; r["val"] = au["attrs"][key];
+    hasil r;
+}
+
+fungsi _semua_digit(s) {
+    jika panjang(s) == 0 { hasil salah; }
+    buat awal = 0;
+    jika byte_di(s, 0) == 45 { awal = 1; }
+    jika awal >= panjang(s) { hasil salah; }
+    untuk (buat i = awal; i < panjang(s); i = i + 1) {
+        buat c = byte_di(s, i);
+        jika c < 48 { hasil salah; }
+        jika c > 57 { hasil salah; }
+    }
+    hasil benar;
+}
+
+fungsi au_get_int64(au, key, wajib) {
+    buat s = au_get_string(au, key, wajib);
+    jika s["ok"] == salah {
+        buat r = peta_baru(); r["ok"] = salah; r["val"] = 0;
+        hasil r;
+    }
+    jika _semua_digit(s["val"]) == salah {
+        tambah(au["errors"], "gagal parse angka pada atribut '" + key + "'");
+        buat r2 = peta_baru(); r2["ok"] = salah; r2["val"] = 0;
+        hasil r2;
+    }
+    buat r3 = peta_baru(); r3["ok"] = benar; r3["val"] = ke_angka(s["val"]);
+    hasil r3;
+}
+
+fungsi au_get_bool(au, key, wajib) {
+    buat s = au_get_string(au, key, wajib);
+    jika s["ok"] == salah {
+        buat r = peta_baru(); r["ok"] = salah; r["val"] = salah;
+        hasil r;
+    }
+    buat v = salah;
+    jika s["val"] == "true" { v = benar; } lain { jika s["val"] != "false" {
+        tambah(au["errors"], "gagal parse bool pada atribut '" + key + "'");
+        buat r2 = peta_baru(); r2["ok"] = salah; r2["val"] = salah;
+        hasil r2;
+    } }
+    buat r3 = peta_baru(); r3["ok"] = benar; r3["val"] = v;
+    hasil r3;
+}
+
+fungsi au_get_jid(au, key, wajib) {
+    buat r = peta_baru();
+    buat v = au["attrs"][key];
+    jika v == kosong {
+        jika wajib { tambah(au["errors"], "atribut JID wajib '" + key + "' tidak ditemukan"); }
+        r["ok"] = salah; r["val"] = kosong;
+        hasil r;
+    }
+    jika tipe(v) != "peta" {
+        tambah(au["errors"], "atribut '" + key + "' bukan JID");
+        r["ok"] = salah; r["val"] = kosong;
+        hasil r;
+    }
+    r["ok"] = benar; r["val"] = v;
+    hasil r;
+}
+
+fungsi au_jid(au, key) { hasil au_get_jid(au, key, benar)["val"]; }
+fungsi au_jid_opsional(au, key) { hasil au_get_jid(au, key, salah)["val"]; }
+
+fungsi au_string(au, key) { hasil au_get_string(au, key, benar)["val"]; }
+fungsi au_string_opsional(au, key) { hasil au_get_string(au, key, salah)["val"]; }
+
+fungsi au_int(au, key) { hasil au_get_int64(au, key, benar)["val"]; }
+fungsi au_int_opsional(au, key) { hasil au_get_int64(au, key, salah)["val"]; }
+
+fungsi au_bool(au, key) { hasil au_get_bool(au, key, benar)["val"]; }
+fungsi au_bool_opsional(au, key) { hasil au_get_bool(au, key, salah)["val"]; }
+
+fungsi au_unix_time(au, key, wajib) {
+    buat n = au_get_int64(au, key, wajib);
+    jika n["ok"] == salah { hasil 0; }
+    hasil n["val"];
+}
+
+fungsi au_unix_milli(au, key, wajib) {
+    buat n = au_get_int64(au, key, wajib);
+    jika n["ok"] == salah { hasil 0; }
+    hasil n["val"] / 1000;
+}
+
+fungsi au_ok(au) { hasil panjang(au["errors"]) == 0; }
+fungsi au_error(au) {
+    jika au_ok(au) { hasil ""; }
+    hasil gabung(au["errors"], "; ");
+}

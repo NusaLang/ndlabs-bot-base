@@ -1,0 +1,74 @@
+buat JID = impor("types/jid.ns");
+
+buat NLHAPUS_QUERY_ID = "30062808666639665";
+buat NLHAPUS_DISKRIMINATOR = "xwa2_newsletter_delete_v2";
+
+fungsi _nlhapus_node(tag, attrs, children, content) {
+    buat n = peta_baru();
+    n["tag"] = tag;
+    jika tipe(attrs) == "peta" { n["attrs"] = attrs; } lain { n["attrs"] = peta_baru(); }
+    jika tipe(children) == "larik" { n["children"] = children; } lain { n["children"] = []; }
+    jika tipe(content) == "teks" { n["content"] = content; n["ada_isi"] = benar; }
+    lain jika panjang(n["children"]) > 0 { n["content"] = kosong; n["ada_isi"] = benar; }
+    lain { n["content"] = kosong; n["ada_isi"] = salah; }
+    hasil n;
+}
+
+fungsi nlhapus_variabel(j) {
+    jika tipe(j) != "peta" { lempar "JID newsletter wajib berupa peta JID"; }
+    jika JID.JidKosong(j) || panjang(j["user"]) == 0 || j["server"] != JID.SRV_NEWS {
+        lempar "JID newsletter harus pakai server newsletter";
+    }
+    jika panjang(j["user"]) > 256 { lempar "user JID newsletter lebih dari 256 byte"; }
+    untuk (buat i = 0; i < panjang(j["user"]); i = i + 1) {
+        buat c = byte_di(j["user"], i);
+        jika c < 48 || c > 57 { lempar "user JID newsletter harus angka"; }
+    }
+    jika j["agent"] != 0 || j["device"] != 0 || j["integrator"] != 0 {
+        lempar "JID newsletter gak boleh nunjuk ke perangkat";
+    }
+    buat r = peta_baru();
+    r["newsletter_id"] = JID.JidKeTeks(j);
+    hasil r;
+}
+
+fungsi nlhapus_buat_node(req_id, j) {
+    buat v = nlhapus_variabel(j);
+    buat qa = peta_baru();
+    qa["query_id"] = NLHAPUS_QUERY_ID;
+    buat payload = "{\"variables\":{\"newsletter_id\":\"" + v["newsletter_id"] + "\"}}";
+
+    buat a = peta_baru();
+    a["id"] = req_id;
+    a["to"] = JID.JidBaru("", JID.SRV_DEF);
+    a["type"] = "get";
+    a["xmlns"] = "w:mex";
+    hasil _nlhapus_node("iq", a, [_nlhapus_node("query", qa, [], payload)], kosong);
+}
+
+fungsi nlhapus_urai_respons(data_json, j) {
+    buat diminta = JID.JidKeTeks(j);
+    jika tipe(data_json) != "teks" || panjang(data_json) == 0 {
+        lempar "respons penghapusan newsletter kosong";
+    }
+    buat root = json_decode(data_json);
+    jika tipe(root) != "peta" { lempar "gagal decode respons penghapusan newsletter"; }
+    buat body = root;
+    jika tipe(root["data"]) == "peta" { body = root["data"]; }
+
+    buat dihapus = body[NLHAPUS_DISKRIMINATOR];
+    jika tipe(dihapus) != "peta" {
+        lempar "respons penghapusan newsletter gak punya " + NLHAPUS_DISKRIMINATOR;
+    }
+    jika dihapus["id"] != diminta {
+        lempar "ID respons penghapusan newsletter " + ke_teks(dihapus["id"]) + " gak cocok sama " + diminta;
+    }
+    buat st = dihapus["state"];
+    jika tipe(st) != "peta" || st["type"] != "DELETED" {
+        lempar "respons penghapusan newsletter gak konfirmasi state DELETED";
+    }
+    buat r = peta_baru();
+    r["ok"] = benar;
+    r["id"] = dihapus["id"];
+    hasil r;
+}

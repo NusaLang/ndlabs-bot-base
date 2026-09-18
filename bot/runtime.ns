@@ -1,0 +1,270 @@
+buat ST    = impor("hypermeow-ns/store/session.ns");
+buat KEYS  = impor("hypermeow-ns/util/keys.ns");
+buat HS    = impor("hypermeow-ns/handshake.ns");
+buat FS    = impor("hypermeow-ns/socket/framesocket.ns");
+buat NS    = impor("hypermeow-ns/socket/noisesocket.ns");
+buat EN    = impor("hypermeow-ns/binary/codec_encode.ns");
+buat D     = impor("hypermeow-ns/binary/codec_decode.ns");
+buat PC    = impor("hypermeow-ns/pair_code.ns");
+buat PRES  = impor("hypermeow-ns/presence.ns");
+buat MS    = impor("hypermeow-ns/msgsend.ns");
+buat PB    = impor("hypermeow-ns/proto/pb.ns");
+buat KL    = impor("hypermeow-ns/client.ns");
+buat PAIR  = impor("pairing_setup.ns");
+buat CP    = muat_plugin("crypto");
+buat WS    = muat_plugin("ws");
+
+fungsi _proses_item_antrian_kirim(k, DB, item_kirim) {
+    coba {
+        buat pesan_struct = json_decode(item_kirim["message_json"]);
+        buat opsi_kirim = kosong;
+        jika tipe(item_kirim["opsi_json"]) == "teks" && panjang(item_kirim["opsi_json"]) > 0 {
+            opsi_kirim = json_decode(item_kirim["opsi_json"]);
+        }
+        buat node_ekstra_eval = kosong;
+        buat label_eval = "[eval sendMessage]";
+        jika tipe(opsi_kirim) == "peta" {
+            jika tipe(opsi_kirim["quoted"]) == "peta" { pesan_struct = MS.TerapkanKutip(pesan_struct, opsi_kirim["quoted"]); }
+            jika tipe(opsi_kirim["additionalNodes"]) == "peta" || tipe(opsi_kirim["additionalNodes"]) == "larik" {
+                node_ekstra_eval = opsi_kirim["additionalNodes"];
+            }
+            jika tipe(opsi_kirim["label"]) == "teks" { label_eval = opsi_kirim["label"]; }
+        }
+        buat wire_eval = PB.PbEnkodeBernama(pesan_struct, "Message");
+        buat chat_user_eval = item_kirim["chat"];
+        untuk (buat cei = 0; cei < panjang(chat_user_eval); cei = cei + 1) {
+            jika byte_di(chat_user_eval, cei) == 64 { chat_user_eval = potong(chat_user_eval, 0, cei); berhenti; }
+        }
+        buat msgid_hasil = KL.KirimWireGrup(k, chat_user_eval, wire_eval, label_eval, 0, node_ekstra_eval);
+        buat hr_ok = peta_baru(); hr_ok["ok"] = benar; hr_ok["id"] = msgid_hasil;
+        DB.AntrianKirimSelesai(item_kirim["id"], "done", json_encode(hr_ok));
+    } tangkap (esend) {
+        buat hr_gagal = peta_baru(); hr_gagal["ok"] = salah; hr_gagal["error"] = ke_teks(esend);
+        DB.AntrianKirimSelesai(item_kirim["id"], "error", json_encode(hr_gagal));
+    }
+}
+
+fungsi _sambungkan_sekali(waBot, DB, ARSIP, UTILS, target_num, target_num_clean, pairing_state, epoch_state) {
+    epoch_state["now"] = epoch_state["now"] + 1;
+    buat epoch_saya = epoch_state["now"];
+
+    buat session_data = ST.MuatSesi("main");
+
+    buat identity_kp = kosong;
+    buat adv_secret = CP["hex_decode"](CP["acak_bytes_hex"](32));
+    buat companion_info = peta_baru();
+    buat handshake_reg_id = kosong;
+
+    buat noise_kp = kosong;
+    jika tipe(session_data["jid"]) == "teks" && panjang(session_data["jid"]) > 0 {
+        cetak("Session found for JID: " + session_data["jid"]);
+        adv_secret = CP["hex_decode"](session_data["adv_secret"]);
+
+        noise_kp = KEYS.KeypairDariPriv(CP["hex_decode"](session_data["noise_priv"]));
+        identity_kp = KEYS.KeypairDariPriv(CP["hex_decode"](session_data["identity_priv"]));
+    } lain {
+        cetak("No session found, starting pairing process for Bot Target: " + target_num + " ...");
+        PAIR.siapkan_identitas(pairing_state);
+        noise_kp = pairing_state["noise_kp"];
+        identity_kp = pairing_state["identity_kp"];
+        handshake_reg_id = pairing_state["reg_id"];
+        companion_info = pairing_state["companion_info"];
+    }
+
+    buat our_signed_prekey_priv = kosong;
+    buat our_registration_id = 0;
+    jika tipe(session_data["signed_prekey_priv"]) == "teks" && panjang(session_data["signed_prekey_priv"]) > 0 {
+        our_signed_prekey_priv = CP["hex_decode"](session_data["signed_prekey_priv"]);
+    }
+    jika tipe(session_data["registration_id"]) == "teks" && panjang(session_data["registration_id"]) > 0 {
+        our_registration_id = ke_angka(session_data["registration_id"]);
+    }
+
+    buat retry_ctx = MS.SiapkanKonteksRetry(identity_kp, session_data);
+
+    cetak("Connecting to WhatsApp...");
+    buat ws_resp = json_decode(WS["ws_buka"]("wss://web.whatsapp.com/ws/chat", "{}"));
+    jika !ws_resp["ok"] {
+        cetak("Failed to connect to WebSocket: " + ke_teks(ws_resp));
+        lempar "WebSocket connection failed";
+    }
+    buat ws_id = ws_resp["id"];
+
+    buat parser = FS.ParserBaru();
+
+    buat io = peta_baru();
+    io["kirim"] = fungsi(data_bin) {
+        WS["ws_kirim"](ws_id, data_bin, 2);
+    };
+    io["terima"] = fungsi() {
+        selama benar {
+            buat r = json_decode(WS["ws_terima"](ws_id, 10000));
+            jika r["closed"] { lempar "WebSocket disconnected"; }
+            jika r["hex"] {
+                buat frames = FS.ParserFeed(parser, CP["hex_decode"](r["hex"]));
+                jika panjang(frames) > 0 { hasil frames[0]; }
+            }
+        }
+    };
+
+    buat noise_socket = HS.LakukanHandshake(io, noise_kp, identity_kp, session_data["jid"], handshake_reg_id, kosong);
+    cetak("Handshake successful, Noise transport active.");
+
+    buat k = peta_baru();
+    k["ws_id"] = ws_id;
+    // Lock kirim beneran (kanal, nunggu -- bukan flag boolean yang nolak
+    // diem-diem) -- semua fungsi kirim_* (grup/1:1/peer) pake lock yang
+    // sama karena counter noise-socket (wc) harus strict sequential
+    // regardless jenis kirimannya. Dibikin di sini (bukan lazy-init) biar
+    // gak ada race pas goroutine per-pesan mulai jalan bersamaan.
+    k["kirim_lock"] = kanal_baru(1);
+    kanal_kirim(k["kirim_lock"], 1);
+    // Peta req_id -> kanal, buat multiplexer IQ (lihat KL.tunggu_iq_kanal).
+    // Cuma loop koneksi di bawah (satu-satunya pemanggil ws_terima) yang
+    // boleh baca socket -- siapapun (termasuk goroutine) yang nunggu
+    // respons IQ tertentu daftar di sini dan nunggu lewat kanal, bukan
+    // baca socket sendiri (ws.cpp punya rbuf yang gak dilock buat baca,
+    // dua pembaca bareng = race condition beneran di level native).
+    k["iq_waiters"] = peta_baru();
+    // CATATAN: sempet dicoba worker-pool tetap (N goroutine nunggu di
+    // kanal), tapi bikin proses segfault berulang (dikonfirmasi lewat
+    // journalctl/dmesg -- pola stack overflow) begitu goroutine-nya idle
+    // nunggu kanal_terima bareng-bareng. Balik ke goroutine-per-pesan
+    // (jalan(...) langsung tiap pesan masuk, lihat client.ns) yang udah
+    // kebukti stabil.
+    k["noise_socket"] = noise_socket;
+    k["parser"] = parser;
+    k["session_data"] = session_data;
+    k["identity_kp"] = identity_kp;
+    k["our_registration_id"] = our_registration_id;
+    k["our_signed_prekey_priv"] = our_signed_prekey_priv;
+    k["retry_ctx"] = retry_ctx;
+    k["waBot"] = waBot;
+    k["DB"] = DB;
+    k["ARSIP"] = ARSIP;
+    k["GRUP_USER_DIBISUKAN"] = UTILS.GRUP_USER_DIBISUKAN;
+    k["companion_info"] = companion_info;
+    k["adv_secret"] = adv_secret;
+    k["noise_kp"] = noise_kp;
+    k["pairing_reg_id"] = pairing_state["reg_id"];
+    k["target_num"] = target_num;
+    k["target_num_clean"] = target_num_clean;
+    k["pairing_iq_terkirim"] = pairing_state["iq_terkirim"];
+    k["pesan_grup_terkirim"] = peta_baru();
+    k["epoch"] = epoch_state;
+    k["epoch_saya"] = epoch_saya;
+    k["mulai_koneksi"] = waktu();
+
+    KL.KirimBootstrap(k);
+
+    jika (tipe(session_data["jid"]) != "teks" || panjang(session_data["jid"]) == 0) && !pairing_state["iq_terkirim"] {
+        buat fresh_ci = PC.BuatCompanionEphemeralKey();
+        buat fci_keys = peta_kunci(fresh_ci);
+        untuk (buat fi = 0; fi < panjang(fci_keys); fi = fi + 1) { companion_info[fci_keys[fi]] = fresh_ci[fci_keys[fi]]; }
+        companion_info["target_num"] = target_num_clean;
+        buat req_id = "12345678";
+        buat iq_node = PC.BuatIqPairNode(req_id, target_num_clean, companion_info, noise_kp["pub"]);
+
+        buat wire_node = EN.BcMarshal(iq_node);
+        buat enc_frame = NS.KirimFrame(noise_socket, wire_node);
+        buat ws_frame = FS.FrameBungkus(enc_frame);
+
+        cetak("[DEBUG] Sending pairing IQ, wire_node len: " + ke_teks(panjang(wire_node)) + ", enc_frame len: " + ke_teks(panjang(enc_frame)) + ", ws_frame len: " + ke_teks(panjang(ws_frame)));
+        WS["ws_kirim"](ws_id, ws_frame, 2);
+
+        cetak("=================================================");
+        cetak("  KODE PAIRING WHATSAPP LIVE: " + companion_info["formatted_code"]);
+        cetak("=================================================");
+        cetak("Buka WhatsApp pada HP (" + target_num + ") -> Perangkat Tertaut -> Tautkan nomor");
+        cetak("=================================================");
+        companion_info["menunggu_ref"] = benar;
+        pairing_state["iq_terkirim"] = benar;
+    }
+
+    buat pres_node = PRES.BuatNodePresenceUpdate("available", "NDLabs Bot");
+    buat pres_bin = EN.BcMarshal(pres_node);
+    NS.KirimAman(ws_id, noise_socket, pres_bin);
+    cetak("[PRESENCE] Kirim presence type=available");
+
+    cetak("Self-Bot is running in Debug Inspector & Error Handler mode. Listening for incoming nodes...");
+
+    buat last_recv_time = waktu();
+    buat last_gc_time = waktu();
+    buat last_antrian_time = waktu();
+    selama benar {
+        jika (waktu() - last_antrian_time) > 1 {
+            last_antrian_time = waktu();
+            coba { KL.SapuIqWaitersTimeout(k); } tangkap (esapu) {}
+            coba {
+                buat pending_kirim = DB.AntrianKirimPending(5);
+                untuk (buat pki = 0; pki < panjang(pending_kirim); pki = pki + 1) {
+                    // Diproses di goroutine sendiri -- kalau kirimnya butuh
+                    // tunggu_iq (grup baru/cache device kosong, dst), itu
+                    // BLOCKING nunggu kanal yang cuma bisa diisi loop utama
+                    // ini sendiri lewat ws_terima. Kalau dipanggil langsung
+                    // di sini (bukan goroutine), loop utama nunggu dirinya
+                    // sendiri -- deadlock sampe timeout tunggu_iq baru lepas.
+                    jalan(_proses_item_antrian_kirim, k, DB, pending_kirim[pki]);
+                }
+            } tangkap (epoll) {}
+        }
+        jika (waktu() - last_gc_time) > 5 {
+            last_gc_time = waktu();
+            coba { gc_paksa(); } tangkap (egc) {}
+            coba {
+                buat u_antrian = 0; jika tipe(k["antrian_node"]) == "larik" { u_antrian = panjang(k["antrian_node"]); }
+                buat u_terkirim = 0; jika tipe(k["pesan_grup_terkirim"]) == "peta" { u_terkirim = panjang(k["pesan_grup_terkirim"]); }
+                buat u_urutan = 0; jika tipe(k["urutan_cache"]) == "larik" { u_urutan = panjang(k["urutan_cache"]); }
+                buat u_skmsg = 0; jika tipe(k["skmsg_tertunda"]) == "peta" { u_skmsg = panjang(k["skmsg_tertunda"]); }
+                buat u_unggah = 0; jika tipe(k["cache_unggah"]) == "peta" { u_unggah = panjang(k["cache_unggah"]); }
+                cetak("[DIAG] antrian=" + ke_teks(u_antrian) + " grup_terkirim=" + ke_teks(u_terkirim) + " urutan_cache=" + ke_teks(u_urutan) + " skmsg_tertunda=" + ke_teks(u_skmsg) + " cache_unggah=" + ke_teks(u_unggah));
+            } tangkap (ediag) { cetak("[DIAG] error: " + ke_teks(ediag)); }
+        }
+        KL.TikKeepalive(k);
+        buat r = json_decode(WS["ws_terima"](ws_id, 3000));
+        jika r["closed"] {
+            cetak("WebSocket connection closed. Reconnecting...");
+            berhenti;
+        }
+
+        jika tipe(r["hex"]) != "teks" && (waktu() - last_recv_time) > 90 {
+            lempar "Koneksi basi (gak ada balesan > 90 detik), paksa reconnect";
+        }
+        jika r["hex"] {
+            last_recv_time = waktu();
+            buat raw_bytes = CP["hex_decode"](r["hex"]);
+            buat frames_enc = FS.ParserFeed(parser, raw_bytes);
+            untuk (buat i = 0; i < panjang(frames_enc); i = i + 1) {
+                buat dec_raw = NS.TerimaFrame(noise_socket, frames_enc[i]);
+                buat node = D.BcUnmarshal(EN.BcUnpack(dec_raw));
+                // Loop ini SATU-SATUNYA pembaca ws_terima -- kalau ini
+                // balesan IQ yang lagi ditunggu (goroutine/kode lain lewat
+                // KL.tunggu_iq), serahin ke kanalnya, jangan diproses dobel.
+                jika !KL.CobaSerahkanKePenunggu(k, node) {
+                    KL.ProsesNode(k, node);
+                    KL.ProsesAntrian(k);
+                }
+            }
+        }
+    }
+
+    WS["ws_tutup"](ws_id);
+}
+
+fungsi jalankan_selamanya(waBot, DB, ARSIP, UTILS, target_num) {
+    buat target_num_clean = "62" + potong(target_num, 1, panjang(target_num));
+    buat pairing_state = peta_baru();
+    pairing_state["iq_terkirim"] = salah;
+    buat epoch_state = peta_baru();
+    epoch_state["now"] = 0;
+
+    selama benar {
+        coba {
+            _sambungkan_sekali(waBot, DB, ARSIP, UTILS, target_num, target_num_clean, pairing_state, epoch_state);
+        } tangkap (e) {
+            cetak("[FATAL] Koneksi/handshake gagal: " + ke_teks(e));
+        }
+        cetak("Menyambung ulang dalam 3 detik...");
+        jalankan_perintah("sleep", ["3"]);
+    }
+}

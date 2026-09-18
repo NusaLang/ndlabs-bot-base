@@ -1,0 +1,221 @@
+buat CONN_GAGAL_UMUM              = 400;
+buat CONN_GAGAL_LOGGED_OUT        = 401;
+buat CONN_GAGAL_BANNED_SEMENTARA  = 402;
+buat CONN_GAGAL_HP_UTAMA_HILANG   = 403;
+buat CONN_GAGAL_CLIENT_KADALUARSA = 405;
+buat CONN_GAGAL_LOGOUT_TAK_DIKENAL = 406;
+buat CONN_GAGAL_USER_AGENT_SALAH  = 409;
+buat CONN_GAGAL_CAT_KADALUARSA    = 413;
+buat CONN_GAGAL_CAT_TIDAK_VALID   = 414;
+buat CONN_GAGAL_TIDAK_KETEMU      = 415;
+buat CONN_GAGAL_CLIENT_TAK_DIKENAL = 418;
+buat CONN_GAGAL_SERVER_ERROR      = 500;
+buat CONN_GAGAL_EKSPERIMEN        = 501;
+buat CONN_GAGAL_LAYANAN_TIDAK_ADA = 503;
+
+fungsi _conn_node(tag, attrs, children) {
+    buat n = peta_baru();
+    n["tag"] = tag;
+    jika tipe(attrs) == "peta" { n["attrs"] = attrs; } lain { n["attrs"] = peta_baru(); }
+    jika tipe(children) == "larik" { n["children"] = children; } lain { n["children"] = []; }
+    n["content"] = kosong;
+    jika panjang(n["children"]) > 0 { n["ada_isi"] = benar; } lain { n["ada_isi"] = salah; }
+    hasil n;
+}
+
+fungsi _conn_anak(node, tag) {
+    jika tipe(node["children"]) != "larik" { hasil kosong; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        jika node["children"][i]["tag"] == tag { hasil node["children"][i]; }
+    }
+    hasil kosong;
+}
+
+fungsi _conn_attr_angka(attrs, nama) {
+    buat v = attrs[nama];
+    jika tipe(v) == "angka" { hasil v; }
+    jika tipe(v) == "teks" && panjang(v) > 0 { hasil ke_angka(v); }
+    hasil 0;
+}
+
+fungsi _conn_attr_teks(attrs, nama) {
+    buat v = attrs[nama];
+    jika tipe(v) == "teks" { hasil v; }
+    hasil "";
+}
+
+fungsi conn_alasan_logged_out(alasan) {
+    hasil alasan == CONN_GAGAL_LOGGED_OUT || alasan == CONN_GAGAL_HP_UTAMA_HILANG || alasan == CONN_GAGAL_LOGOUT_TAK_DIKENAL;
+}
+
+fungsi conn_alasan_ke_teks(alasan) {
+    jika alasan == CONN_GAGAL_UMUM { hasil "kesalahan umum"; }
+    jika alasan == CONN_GAGAL_LOGGED_OUT { hasil "device di-logout dari HP"; }
+    jika alasan == CONN_GAGAL_BANNED_SEMENTARA { hasil "akun kena ban sementara"; }
+    jika alasan == CONN_GAGAL_HP_UTAMA_HILANG { hasil "device utama hilang/terkunci"; }
+    jika alasan == CONN_GAGAL_CLIENT_KADALUARSA { hasil "versi client kadaluarsa"; }
+    jika alasan == CONN_GAGAL_LOGOUT_TAK_DIKENAL { hasil "logout tanpa alasan jelas / banned"; }
+    jika alasan == CONN_GAGAL_USER_AGENT_SALAH { hasil "user agent ditolak"; }
+    jika alasan == CONN_GAGAL_CAT_KADALUARSA { hasil "CAT kadaluarsa"; }
+    jika alasan == CONN_GAGAL_CAT_TIDAK_VALID { hasil "CAT tidak valid"; }
+    jika alasan == CONN_GAGAL_TIDAK_KETEMU { hasil "tidak ditemukan"; }
+    jika alasan == CONN_GAGAL_CLIENT_TAK_DIKENAL { hasil "client tidak dikenal"; }
+    jika alasan == CONN_GAGAL_SERVER_ERROR { hasil "kesalahan internal server"; }
+    jika alasan == CONN_GAGAL_EKSPERIMEN { hasil "fitur eksperimental"; }
+    jika alasan == CONN_GAGAL_LAYANAN_TIDAK_ADA { hasil "layanan tidak tersedia"; }
+    hasil "kesalahan tidak dikenal (" + ke_teks(alasan) + ")";
+}
+
+fungsi conn_ban_sementara_ke_teks(kode) {
+    jika kode == 101 { hasil "kirim ke terlalu banyak orang"; }
+    jika kode == 102 { hasil "diblokir banyak pengguna"; }
+    jika kode == 103 { hasil "bikin terlalu banyak grup"; }
+    jika kode == 104 { hasil "kirim pesan sama berulang-ulang"; }
+    jika kode == 106 { hasil "pakai broadcast list berlebihan"; }
+    hasil "alasan ban tidak dikenal (" + ke_teks(kode) + ")";
+}
+
+fungsi conn_urai_stream_error(node) {
+    buat r = peta_baru();
+    r["kode"] = _conn_attr_teks(node["attrs"], "code");
+    r["konflik"] = "";
+    buat c = _conn_anak(node, "conflict");
+    jika tipe(c) == "peta" { r["konflik"] = _conn_attr_teks(c["attrs"], "type"); }
+    r["node"] = node;
+
+    jika r["kode"] == "515" {
+        r["aksi"] = "sambung_ulang";
+        r["pesan"] = "server minta reconnect setelah login (515)";
+        hasil r;
+    }
+    jika r["kode"] == "401" && r["konflik"] == "device_removed" {
+        r["aksi"] = "logged_out";
+        r["pesan"] = "device dihapus dari HP, sesi harus dihapus";
+        hasil r;
+    }
+    jika r["konflik"] == "replaced" {
+        r["aksi"] = "digantikan";
+        r["pesan"] = "sesi diambil alih koneksi lain";
+        hasil r;
+    }
+    jika r["kode"] == "503" {
+        r["aksi"] = "tunggu_reconnect";
+        r["pesan"] = "server restart (503), auto-reconnect bakal nanganin";
+        hasil r;
+    }
+    jika r["kode"] == ke_teks(CONN_GAGAL_CAT_KADALUARSA) || r["kode"] == ke_teks(CONN_GAGAL_CAT_TIDAK_VALID) {
+        r["aksi"] = "refresh_cat";
+        r["pesan"] = "CAT perlu di-refresh sebelum reconnect";
+        hasil r;
+    }
+    r["aksi"] = "tak_dikenal";
+    r["pesan"] = "stream error tak dikenal (kode " + ke_teks(r["kode"]) + ")";
+    hasil r;
+}
+
+fungsi conn_urai_ib(node) {
+    buat out = [];
+    jika tipe(node["children"]) != "larik" { hasil out; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        buat c = node["children"][i];
+        buat e = peta_baru();
+        jika c["tag"] == "downgrade_webclient" {
+            e["tipe"] = "qr_tanpa_multidevice";
+            tambah(out, e);
+        }
+        jika c["tag"] == "offline_preview" {
+            e["tipe"] = "pratinjau_sync_offline";
+            e["total"] = _conn_attr_angka(c["attrs"], "count");
+            e["appdata"] = _conn_attr_angka(c["attrs"], "appdata");
+            e["pesan"] = _conn_attr_angka(c["attrs"], "message");
+            e["notifikasi"] = _conn_attr_angka(c["attrs"], "notification");
+            e["receipt"] = _conn_attr_angka(c["attrs"], "receipt");
+            tambah(out, e);
+        }
+        jika c["tag"] == "offline" {
+            e["tipe"] = "sync_offline_selesai";
+            e["total"] = _conn_attr_angka(c["attrs"], "count");
+            tambah(out, e);
+        }
+        jika c["tag"] == "dirty" {
+            e["tipe"] = "dirty";
+            e["kategori"] = _conn_attr_teks(c["attrs"], "type");
+            e["waktu"] = _conn_attr_angka(c["attrs"], "timestamp");
+            tambah(out, e);
+        }
+    }
+    hasil out;
+}
+
+fungsi conn_urai_gagal_konek(node) {
+    buat r = peta_baru();
+    buat na = node["attrs"];
+    r["alasan"] = _conn_attr_angka(na, "reason");
+    r["pesan"] = _conn_attr_teks(na, "message");
+    r["node"] = node;
+    r["auto_reconnect"] = salah;
+
+    jika r["alasan"] == CONN_GAGAL_LAYANAN_TIDAK_ADA || r["alasan"] == CONN_GAGAL_SERVER_ERROR {
+        r["auto_reconnect"] = benar;
+    }
+    jika r["alasan"] == CONN_GAGAL_CAT_TIDAK_VALID || r["alasan"] == CONN_GAGAL_CAT_KADALUARSA {
+        r["auto_reconnect"] = benar;
+    }
+
+    jika r["alasan"] == CONN_GAGAL_HP_UTAMA_HILANG {
+        r["logout_judul"] = _conn_attr_teks(na, "logout_message_header");
+        r["logout_isi"] = _conn_attr_teks(na, "logout_message_subtext");
+    }
+
+    jika conn_alasan_logged_out(r["alasan"]) {
+        r["aksi"] = "logged_out";
+    } lain jika r["alasan"] == CONN_GAGAL_BANNED_SEMENTARA {
+        r["aksi"] = "ban_sementara";
+        r["kode_ban"] = _conn_attr_angka(na, "code");
+        r["ban_detik"] = _conn_attr_angka(na, "expire");
+    } lain jika r["alasan"] == CONN_GAGAL_CLIENT_KADALUARSA {
+        r["aksi"] = "client_kadaluarsa";
+    } lain jika r["alasan"] == CONN_GAGAL_CAT_TIDAK_VALID || r["alasan"] == CONN_GAGAL_CAT_KADALUARSA {
+        r["aksi"] = "refresh_cat";
+    } lain jika r["auto_reconnect"] {
+        r["aksi"] = "tunggu_reconnect";
+    } lain {
+        r["aksi"] = "tak_dikenal";
+    }
+    r["deskripsi"] = conn_alasan_ke_teks(r["alasan"]);
+    hasil r;
+}
+
+fungsi conn_urai_sukses(node) {
+    buat r = peta_baru();
+    buat na = node["attrs"];
+    r["lid"] = na["lid"];
+    r["waktu_server"] = _conn_attr_angka(na, "t");
+    r["selisih_waktu"] = 0;
+    jika r["waktu_server"] > 0 { r["selisih_waktu"] = r["waktu_server"] - waktu(); }
+    r["props"] = _conn_attr_teks(na, "props");
+    hasil r;
+}
+
+fungsi conn_lid_perlu_disimpan(lid_tersimpan, lid_node) {
+    jika tipe(lid_node) != "peta" { hasil salah; }
+    jika panjang(ke_teks(lid_node["user"])) == 0 { hasil salah; }
+    jika tipe(lid_tersimpan) != "peta" { hasil benar; }
+    jika panjang(ke_teks(lid_tersimpan["user"])) == 0 { hasil benar; }
+    hasil lid_tersimpan["user"] != lid_node["user"];
+}
+
+fungsi conn_buat_iq_passive(req_id, passive) {
+    buat tag = "active";
+    jika passive == benar { tag = "passive"; }
+    buat jid_server = peta_baru();
+    jid_server["jid"] = benar; jid_server["user"] = ""; jid_server["server"] = "s.whatsapp.net";
+    jid_server["device"] = 0; jid_server["agent"] = 0;
+
+    buat attrs = peta_baru();
+    attrs["id"] = req_id;
+    attrs["to"] = jid_server;
+    attrs["type"] = "set";
+    attrs["xmlns"] = "passive";
+    hasil _conn_node("iq", attrs, [_conn_node(tag, peta_baru(), [])]);
+}

@@ -1,0 +1,195 @@
+buat PB = impor("proto/pb.ns");
+
+buat ARMADILLO_VERSI_APP_FB = 2;
+buat ARMADILLO_VERSI_APP_IG = 3;
+buat ARMADILLO_VERSI_CONSUMER = 1;
+buat ARMADILLO_VERSI_ARMADILLO = 1;
+
+fungsi _armadillo_sub(data) {
+    buat r = peta_baru();
+    r["payload"] = "";
+    r["versi"] = 0;
+    jika tipe(data) != "teks" { hasil r; }
+    buat s = PB.PbDekode(data);
+    jika tipe(s["1"]) == "teks" { r["payload"] = s["1"]; }
+    jika tipe(s["2"]) == "angka" { r["versi"] = s["2"]; }
+    hasil r;
+}
+
+fungsi _armadillo_nama_sub(tag) {
+    jika tag == 2 { hasil "consumer"; }
+    jika tag == 3 { hasil "business"; }
+    jika tag == 4 { hasil "payment"; }
+    jika tag == 5 { hasil "multi_device"; }
+    jika tag == 6 { hasil "voip"; }
+    jika tag == 7 { hasil "armadillo"; }
+    hasil "tidak_dikenal";
+}
+
+fungsi _armadillo_urai_protocol(data) {
+    buat r = peta_baru();
+    r["padding"] = kosong;
+    r["dsm"] = kosong;
+    r["skdm"] = kosong;
+    r["device_list_metadata"] = kosong;
+    r["icdc"] = kosong;
+    r["backup_directive"] = kosong;
+    jika tipe(data) != "teks" { hasil r; }
+    buat p = PB.PbDekode(data);
+    jika tipe(p["1"]) == "teks" {
+        buat integral = PB.PbDekode(p["1"]);
+        jika tipe(integral["1"]) == "teks" { r["padding"] = integral["1"]; }
+        jika tipe(integral["2"]) == "teks" {
+            buat dsm = PB.PbDekode(integral["2"]);
+            buat d = peta_baru();
+            d["destination_jid"] = dsm["1"];
+            d["phash"] = dsm["2"];
+            r["dsm"] = d;
+        }
+    }
+    jika tipe(p["2"]) == "teks" {
+        buat anc = PB.PbDekode(p["2"]);
+        jika tipe(anc["2"]) == "teks" {
+            buat sk = PB.PbDekode(anc["2"]);
+            buat s = peta_baru();
+            s["group_id"] = sk["1"];
+            s["axolotl"] = sk["2"];
+            r["skdm"] = s;
+        }
+        jika tipe(anc["3"]) == "teks" { r["device_list_metadata"] = anc["3"]; }
+        jika tipe(anc["4"]) == "teks" { r["icdc"] = anc["4"]; }
+        jika tipe(anc["5"]) == "teks" {
+            buat bd = PB.PbDekode(anc["5"]);
+            buat b = peta_baru();
+            b["message_id"] = bd["1"];
+            b["action_type"] = bd["2"];
+            b["supplemental_key"] = bd["3"];
+            r["backup_directive"] = b;
+        }
+    }
+    hasil r;
+}
+
+fungsi _armadillo_dekode_fb(app_wire) {
+    buat r = peta_baru();
+    r["ok"] = salah;
+    r["error"] = "";
+    r["metadata"] = kosong;
+    r["jenis"] = "";
+    r["versi_sub"] = 0;
+    r["pesan_wire"] = "";
+
+    buat app = PB.PbDekode(app_wire);
+    jika tipe(app["2"]) == "teks" { r["metadata"] = PB.PbDekode(app["2"]); }
+    jika tipe(app["1"]) != "teks" {
+        r["ok"] = benar;
+        hasil r;
+    }
+    buat payload = PB.PbDekode(app["1"]);
+    jika tipe(payload["1"]) == "teks" { r["error"] = "core content payload belum didukung"; hasil r; }
+    jika tipe(payload["2"]) == "teks" { r["error"] = "signal payload belum didukung"; hasil r; }
+    jika tipe(payload["3"]) == "teks" { r["error"] = "application data payload belum didukung"; hasil r; }
+    jika tipe(payload["4"]) != "teks" { r["error"] = "tipe konten application payload tidak didukung"; hasil r; }
+
+    buat sp = PB.PbDekode(payload["4"]);
+    untuk (buat tag = 2; tag <= 7; tag = tag + 1) {
+        jika tipe(sp[ke_teks(tag)]) == "teks" {
+            buat sub = _armadillo_sub(sp[ke_teks(tag)]);
+            r["jenis"] = _armadillo_nama_sub(tag);
+            r["versi_sub"] = sub["versi"];
+            r["pesan_wire"] = sub["payload"];
+            r["ok"] = benar;
+            hasil r;
+        }
+    }
+    r["error"] = "tipe subprotocol tidak didukung";
+    hasil r;
+}
+
+fungsi _armadillo_dekode_ig(app_wire) {
+    buat r = peta_baru();
+    r["ok"] = salah;
+    r["error"] = "";
+    r["jenis"] = "";
+    r["pesan_wire"] = "";
+    buat tp = PB.PbDekode(app_wire);
+    jika tipe(tp["1"]) == "teks" { r["jenis"] = "ig_add"; r["pesan_wire"] = tp["1"]; r["ok"] = benar; hasil r; }
+    jika tipe(tp["2"]) == "teks" { r["jenis"] = "ig_delete"; r["pesan_wire"] = tp["2"]; r["ok"] = benar; hasil r; }
+    jika tipe(tp["3"]) == "teks" { r["jenis"] = "ig_supplement"; r["pesan_wire"] = tp["3"]; r["ok"] = benar; hasil r; }
+    r["ok"] = benar;
+    hasil r;
+}
+
+fungsi armadillo_dekode(data) {
+    buat r = peta_baru();
+    r["ok"] = salah;
+    r["error"] = "";
+    r["versi_app"] = 0;
+    r["jenis"] = "";
+    r["versi_sub"] = 0;
+    r["pesan_wire"] = "";
+    r["metadata"] = kosong;
+    r["protokol"] = peta_baru();
+    r["skdm"] = kosong;
+
+    jika tipe(data) != "teks" || panjang(data) == 0 {
+        r["error"] = "transport kosong";
+        hasil r;
+    }
+    buat t = PB.PbDekode(data);
+    r["protokol"] = _armadillo_urai_protocol(t["2"]);
+    r["skdm"] = r["protokol"]["skdm"];
+
+    jika tipe(t["1"]) != "teks" {
+        r["ok"] = benar;
+        hasil r;
+    }
+    buat payload = PB.PbDekode(t["1"]);
+    buat sub = _armadillo_sub(payload["1"]);
+    r["versi_app"] = sub["versi"];
+
+    jika sub["versi"] == ARMADILLO_VERSI_APP_FB {
+        buat fb = _armadillo_dekode_fb(sub["payload"]);
+        r["ok"] = fb["ok"];
+        r["error"] = fb["error"];
+        r["jenis"] = fb["jenis"];
+        r["versi_sub"] = fb["versi_sub"];
+        r["pesan_wire"] = fb["pesan_wire"];
+        r["metadata"] = fb["metadata"];
+        hasil r;
+    }
+    jika sub["versi"] == ARMADILLO_VERSI_APP_IG {
+        buat ig = _armadillo_dekode_ig(sub["payload"]);
+        r["ok"] = ig["ok"];
+        r["error"] = ig["error"];
+        r["jenis"] = ig["jenis"];
+        r["pesan_wire"] = ig["pesan_wire"];
+        hasil r;
+    }
+    r["error"] = "versi subprotocol tidak didukung " + ke_teks(sub["versi"]) + " di MessageTransport";
+    hasil r;
+}
+
+fungsi armadillo_tangani_terdekripsi(info, terdekripsi, retry_count) {
+    buat ev = peta_baru();
+    ev["handler_gagal"] = salah;
+    ev["protobuf_gagal"] = salah;
+    ev["skdm"] = kosong;
+    ev["kirim_skdm"] = salah;
+    ev["dispatch"] = salah;
+    ev["info"] = info;
+    ev["retry_count"] = retry_count;
+
+    buat dec = armadillo_dekode(terdekripsi);
+    ev["dekode"] = dec;
+    jika !dec["ok"] {
+        ev["protobuf_gagal"] = benar;
+        hasil ev;
+    }
+    jika tipe(dec["skdm"]) == "peta" {
+        ev["skdm"] = dec["skdm"];
+        jika tipe(info) == "peta" && info["is_grup"] { ev["kirim_skdm"] = benar; }
+    }
+    jika panjang(dec["pesan_wire"]) > 0 { ev["dispatch"] = benar; }
+    hasil ev;
+}

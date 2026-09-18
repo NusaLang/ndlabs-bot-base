@@ -1,0 +1,64 @@
+buat UPDATE_ORIGIN = "https://web.whatsapp.com";
+buat UPDATE_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36";
+buat UPDATE_PENANDA = "\"client_revision\":";
+
+fungsi _update_cari(s, cari) {
+    buat n = panjang(cari);
+    untuk (buat i = 0; i + n <= panjang(s); i = i + 1) {
+        jika potong(s, i, i + n) == cari { hasil i; }
+    }
+    hasil 0 - 1;
+}
+
+fungsi _update_digit(s, i) {
+    buat b = byte_di(s, i);
+    hasil b >= 48 && b <= 57;
+}
+
+fungsi update_ambil_html(path_tmp) {
+    buat res = jalankan_perintah("curl", ["-sSL", "--fail",
+        "--connect-timeout", "15", "--max-time", "30",
+        "-o", path_tmp,
+        "-H", "User-Agent: " + UPDATE_UA,
+        "-H", "Sec-Fetch-Dest: document",
+        "-H", "Sec-Fetch-Mode: navigate",
+        "-H", "Sec-Fetch-Site: none",
+        "-H", "Sec-Fetch-User: ?1",
+        "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "-H", "Accept-Language: en-US,en;q=0.9",
+        UPDATE_ORIGIN]);
+    jika res["status"] != 0 { lempar "gagal ambil halaman web.whatsapp.com: " + ke_teks(res["error"]); }
+    hasil baca_file(path_tmp);
+}
+
+fungsi update_cari_revisi(html) {
+    buat pos = _update_cari(html, UPDATE_PENANDA);
+    jika pos < 0 { lempar "nomor versi gak ketemu di halaman"; }
+    buat i = pos + panjang(UPDATE_PENANDA);
+    buat angka = "";
+    selama i < panjang(html) && _update_digit(html, i) {
+        angka = angka + potong(html, i, i + 1);
+        i = i + 1;
+    }
+    jika panjang(angka) == 0 { lempar "nomor versi gak bisa dibaca"; }
+    hasil ke_angka(angka);
+}
+
+fungsi update_versi_terbaru(path_tmp) {
+    buat p = path_tmp;
+    jika tipe(p) != "teks" || panjang(p) == 0 { p = "/tmp/wa_version.html"; }
+    buat rev = update_cari_revisi(update_ambil_html(p));
+    buat v = peta_baru();
+    v["mayor"] = 2;
+    v["minor"] = 3000;
+    v["patch"] = rev;
+    hasil v;
+}
+
+fungsi update_versi_ke_teks(v) {
+    hasil ke_teks(v["mayor"]) + "." + ke_teks(v["minor"]) + "." + ke_teks(v["patch"]);
+}
+
+fungsi update_versi_ke_larik(v) {
+    hasil [v["mayor"], v["minor"], v["patch"]];
+}

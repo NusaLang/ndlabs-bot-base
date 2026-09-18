@@ -1,0 +1,110 @@
+buat _PUSH_CP = muat_plugin("crypto");
+buat PUSH_XMLNS = "urn:xmpp:whatsapp:push";
+
+fungsi _push_jid_server() {
+    buat j = peta_baru();
+    j["jid"] = benar; j["user"] = ""; j["server"] = "s.whatsapp.net"; j["device"] = 0; j["agent"] = 0;
+    hasil j;
+}
+
+fungsi _push_node(tag, attrs, children) {
+    buat n = peta_baru();
+    n["tag"] = tag;
+    jika tipe(attrs) == "peta" { n["attrs"] = attrs; } lain { n["attrs"] = peta_baru(); }
+    jika tipe(children) == "larik" { n["children"] = children; } lain { n["children"] = []; }
+    n["content"] = kosong;
+    jika panjang(n["children"]) > 0 { n["ada_isi"] = benar; } lain { n["ada_isi"] = salah; }
+    hasil n;
+}
+
+fungsi _push_base64_url_tanpa_padding(s) {
+    buat b = base64_encode(s);
+    buat out = "";
+    untuk (buat i = 0; i < panjang(b); i = i + 1) {
+        buat c = potong(b, i, i + 1);
+        jika c == "+" { out = out + "-"; }
+        lain jika c == "/" { out = out + "_"; }
+        lain jika c == "=" { }
+        lain { out = out + c; }
+    }
+    hasil out;
+}
+
+fungsi push_config_fcm(token) {
+    buat a = peta_baru();
+    a["id"] = token;
+    a["num_acc"] = 1;
+    a["platform"] = "gcm";
+    hasil a;
+}
+
+fungsi push_config_apns(token, voip_token, msg_id_enc_key) {
+    buat kunci = msg_id_enc_key;
+    jika tipe(kunci) != "teks" || panjang(kunci) != 32 {
+        kunci = _PUSH_CP["hex_decode"](_PUSH_CP["acak_bytes_hex"](32));
+    }
+    buat a = peta_baru();
+    a["id"] = token;
+    a["platform"] = "apple";
+    a["version"] = 2;
+    a["reg_push"] = 1;
+    a["preview"] = 1;
+    a["pkey"] = _push_base64_url_tanpa_padding(kunci);
+    a["background_location"] = 1;
+    a["call"] = "Opening.m4r";
+    a["default"] = "note.m4r";
+    a["groups"] = "note.m4r";
+    a["lg"] = "en";
+    a["lc"] = "US";
+    a["nse_call"] = 0;
+    a["nse_ver"] = 2;
+    a["nse_read"] = 0;
+    a["voip_payload_type"] = 2;
+    jika tipe(voip_token) == "teks" && panjang(voip_token) > 0 { a["voip"] = voip_token; }
+    hasil a;
+}
+
+fungsi push_config_web(endpoint, auth, p256dh) {
+    buat a = peta_baru();
+    a["platform"] = "web";
+    a["endpoint"] = endpoint;
+    a["auth"] = base64_encode(auth);
+    a["p256dh"] = base64_encode(p256dh);
+    hasil a;
+}
+
+fungsi push_buat_iq_ambil_config(req_id) {
+    buat attrs = peta_baru();
+    attrs["id"] = req_id;
+    attrs["to"] = _push_jid_server();
+    attrs["type"] = "get";
+    attrs["xmlns"] = PUSH_XMLNS;
+    hasil _push_node("iq", attrs, [_push_node("settings", peta_baru(), [])]);
+}
+
+fungsi push_buat_iq_daftar(req_id, config_attrs) {
+    jika tipe(config_attrs) != "peta" { lempar "config push harus peta attrs"; }
+    buat attrs = peta_baru();
+    attrs["id"] = req_id;
+    attrs["to"] = _push_jid_server();
+    attrs["type"] = "set";
+    attrs["xmlns"] = PUSH_XMLNS;
+    hasil _push_node("iq", attrs, [_push_node("config", config_attrs, [])]);
+}
+
+fungsi push_urai_config(resp_node) {
+    buat r = peta_baru();
+    r["ok"] = salah;
+    jika tipe(resp_node) != "peta" { hasil r; }
+    jika resp_node["attrs"]["type"] == "error" { hasil r; }
+    r["ok"] = benar;
+    r["setelan"] = peta_baru();
+    jika tipe(resp_node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(resp_node["children"]); i = i + 1) {
+        buat c = resp_node["children"][i];
+        jika c["tag"] != "settings" { lanjut; }
+        buat ks = peta_kunci(c["attrs"]);
+        untuk (buat j = 0; j < panjang(ks); j = j + 1) { r["setelan"][ks[j]] = c["attrs"][ks[j]]; }
+    }
+    hasil r;
+}

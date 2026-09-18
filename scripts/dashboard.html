@@ -1,0 +1,193 @@
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none}
+html,body{margin:0;padding:0;background:transparent;font-family:system-ui,-apple-system,sans-serif;touch-action:manipulation;overflow-x:hidden}
+.wrap{width:100%;padding:6px}
+.card{overflow:hidden;border-radius:16px;background:#0a0a0c;border:1px solid rgba(255,255,255,0.15);box-shadow:0 12px 30px rgba(0,0,0,0.7)}
+.head{padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px;border-bottom:1px solid rgba(255,255,255,0.08);background:linear-gradient(90deg,rgba(0,255,180,0.08),transparent)}
+.brand{min-width:0}
+.brand small{display:block;font-size:7px;color:#00ffb8;letter-spacing:1.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.brand b{display:block;color:#fff;font-size:13px;letter-spacing:0.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dot{width:7px;height:7px;border-radius:50%;background:#00ff88;box-shadow:0 0 8px #00ff88;display:inline-block;margin-right:4px;animation:pulse 1.6s infinite;flex-shrink:0}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.35}}
+.live{color:#00ff88;font-size:9px;font-weight:700;letter-spacing:0.5px;display:flex;align-items:center;white-space:nowrap;flex-shrink:0}
+.body{padding:10px 10px 12px}
+.stack{display:flex;flex-direction:column;gap:8px}
+.panel{background:#131417;border:1px solid rgba(255,255,255,0.06);border-radius:12px;padding:10px}
+.panel h4{margin:0 0 8px;color:#8b93a1;font-size:9px;letter-spacing:1.2px;font-weight:700;text-transform:uppercase}
+.gauge-wrap{display:flex;align-items:center;gap:10px}
+.gauge-wrap canvas{flex-shrink:0}
+.gauge-val{flex:1;min-width:0}
+.gauge-val .big{font-size:20px;font-weight:800;color:#fff;line-height:1}
+.gauge-val .small{font-size:10px;color:#6c7480;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bars{margin-top:9px;display:flex;gap:2px;align-items:flex-end;height:22px}
+.bars i{flex:1;background:#1c1f24;border-radius:2px;min-width:2px}
+.stat-row{display:flex;justify-content:space-between;gap:8px;font-size:10.5px;color:#8b93a1;margin-top:6px}
+.stat-row b{color:#dfe3e8;font-weight:600;text-align:right}
+.gpu-row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.05)}
+.gpu-row:last-child{border-bottom:none}
+.gpu-name{font-size:11px;color:#dfe3e8;font-weight:600;flex-shrink:0}
+.gpu-metrics{display:flex;gap:10px}
+.gpu-metric{text-align:right}
+.gpu-metric .v{font-size:12px;font-weight:800;color:#fff}
+.gpu-metric .l{font-size:7px;color:#6c7480;letter-spacing:0.4px}
+.footer{display:flex;flex-direction:column;gap:3px;margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06);font-size:9.5px;color:#5a6270}
+.footer b{color:#8b93a1}
+</style>
+
+<div class="wrap">
+  <div class="card">
+    <div class="head">
+      <div class="brand">
+        <small>NDLABS INFRA</small>
+        <b id="hn">SYSTEM DASHBOARD</b>
+      </div>
+      <div class="live"><span class="dot"></span>LIVE</div>
+    </div>
+    <div class="body">
+      <div class="stack">
+        <div class="panel">
+          <h4>CPU Load</h4>
+          <div class="gauge-wrap">
+            <canvas id="gCpu" width="64" height="64"></canvas>
+            <div class="gauge-val">
+              <div class="big" id="cpuPct">0%</div>
+              <div class="small" id="cpuModel">-</div>
+            </div>
+          </div>
+          <div class="bars" id="cpuCores"></div>
+          <div class="stat-row"><span>load avg</span><b id="cpuLoad">0 0 0</b></div>
+        </div>
+
+        <div class="panel">
+          <h4>Memory</h4>
+          <div class="gauge-wrap">
+            <canvas id="gMem" width="64" height="64"></canvas>
+            <div class="gauge-val">
+              <div class="big" id="memPct">0%</div>
+              <div class="small" id="memUsed">0 / 0 MB</div>
+            </div>
+          </div>
+          <div class="stat-row"><span>swap</span><b id="swapInfo">0%</b></div>
+          <div class="stat-row"><span>available</span><b id="memAvail">0 MB</b></div>
+        </div>
+
+        <div class="panel">
+          <h4>GPU</h4>
+          <div id="gpuList"></div>
+        </div>
+
+        <div class="panel">
+          <h4>Disk /</h4>
+          <div class="stat-row" style="margin-top:0"><span>used</span><b id="diskUsed">0 / 0 GB</b></div>
+          <div style="height:7px;background:#1c1f24;border-radius:4px;overflow:hidden;margin-top:6px">
+            <div id="diskBar" style="height:100%;width:0%;background:linear-gradient(90deg,#00ffb8,#00d2ff);transition:width .6s"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer">
+        <span>uptime bot: <b id="botUp">-</b></span>
+        <span>uptime sistem: <b id="sysUp">-</b></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const DATA = __NDLABS_DASHBOARD_DATA__;
+
+function fmtDur(s){
+  s=Math.floor(s);
+  const d=Math.floor(s/86400); s%=86400;
+  const h=Math.floor(s/3600); s%=3600;
+  const m=Math.floor(s/60);
+  let out="";
+  if(d>0) out+=d+"h ";
+  out+=h+"j "+m+"m";
+  return out;
+}
+
+function ringColor(pct){
+  if(pct<50) return "#00ff88";
+  if(pct<80) return "#ffb020";
+  return "#ff3355";
+}
+
+function drawRing(id,pct){
+  const cv=document.getElementById(id), ctx=cv.getContext("2d");
+  const cx=32, cy=32, r=26, lw=6;
+  ctx.clearRect(0,0,64,64);
+  ctx.lineCap="round";
+
+  ctx.beginPath();
+  ctx.arc(cx,cy,r,0,Math.PI*2);
+  ctx.strokeStyle="#1c1f24";
+  ctx.lineWidth=lw;
+  ctx.stroke();
+
+  const frac=Math.max(0,Math.min(1,pct/100));
+  ctx.beginPath();
+  ctx.arc(cx,cy,r,-Math.PI/2,-Math.PI/2+frac*Math.PI*2);
+  ctx.strokeStyle=ringColor(pct);
+  ctx.lineWidth=lw;
+  ctx.stroke();
+}
+
+function render(){
+  document.getElementById("hn").textContent=(DATA.hostname||"SYSTEM")+" DASHBOARD";
+
+  const cpu=DATA.cpu||{};
+  drawRing("gCpu",cpu.load_pct||0);
+  document.getElementById("cpuPct").textContent=(cpu.load_pct||0).toFixed(1)+"%";
+  document.getElementById("cpuModel").textContent=(cpu.cores||0)+" cores";
+  document.getElementById("cpuLoad").textContent=(cpu.load1||0)+" "+(cpu.load5||0)+" "+(cpu.load15||0);
+
+  const coresEl=document.getElementById("cpuCores");
+  coresEl.innerHTML="";
+  const n=cpu.cores||1;
+  for(let i=0;i<n;i++){
+    const bar=document.createElement("i");
+    const h=20+Math.random()*(cpu.load_pct||5)*0.5;
+    bar.style.height=Math.min(24,Math.max(4,h))+"px";
+    bar.style.background=ringColor(cpu.load_pct||0);
+    coresEl.appendChild(bar);
+  }
+
+  const mem=DATA.mem||{};
+  drawRing("gMem",mem.used_pct||0);
+  document.getElementById("memPct").textContent=(mem.used_pct||0).toFixed(1)+"%";
+  document.getElementById("memUsed").textContent=(mem.used_mb||0)+" / "+(mem.total_mb||0)+" MB";
+  document.getElementById("swapInfo").textContent=(mem.swap_used_mb||0)+" / "+(mem.swap_total_mb||0)+" MB ("+(mem.swap_used_pct||0).toFixed(1)+"%)";
+  document.getElementById("memAvail").textContent=(mem.avail_mb||0)+" MB";
+
+  const gpuList=document.getElementById("gpuList");
+  gpuList.innerHTML="";
+  const gpus=DATA.gpu||[];
+  if(gpus.length===0){
+    gpuList.innerHTML='<div style="font-size:11px;color:#5a6270">GPU tidak terdeteksi</div>';
+  } else {
+    gpus.forEach(g=>{
+      const row=document.createElement("div");
+      row.className="gpu-row";
+      row.innerHTML=
+        '<div class="gpu-name">'+g.card+'</div>'+
+        '<div class="gpu-metrics">'+
+          '<div class="gpu-metric"><div class="v">'+g.util_pct+'%</div><div class="l">UTIL</div></div>'+
+          '<div class="gpu-metric"><div class="v">'+g.vram_pct+'%</div><div class="l">VRAM</div></div>'+
+          '<div class="gpu-metric"><div class="v">'+g.temp_c+'&deg;</div><div class="l">TEMP</div></div>'+
+        '</div>';
+      gpuList.appendChild(row);
+    });
+  }
+
+  const disk=DATA.disk||{};
+  document.getElementById("diskUsed").textContent=(disk.used_gb||0)+" / "+(disk.total_gb||0)+" GB";
+  document.getElementById("diskBar").style.width=(disk.used_pct||0)+"%";
+  document.getElementById("diskBar").style.background="linear-gradient(90deg,"+ringColor(disk.used_pct||0)+",#00d2ff)";
+
+  document.getElementById("botUp").textContent=fmtDur(DATA.bot_uptime_detik||0);
+  document.getElementById("sysUp").textContent=fmtDur(DATA.sys_uptime_detik||0);
+}
+
+render();
+</script>

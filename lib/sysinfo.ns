@@ -1,0 +1,247 @@
+fungsi _trim(s) {
+    buat awal = 0;
+    buat akhir = panjang(s);
+    selama awal < akhir && (byte_di(s, awal) == 32 || byte_di(s, awal) == 9 || byte_di(s, awal) == 10 || byte_di(s, awal) == 13) { awal = awal + 1; }
+    selama akhir > awal && (byte_di(s, akhir - 1) == 32 || byte_di(s, akhir - 1) == 9 || byte_di(s, akhir - 1) == 10 || byte_di(s, akhir - 1) == 13) { akhir = akhir - 1; }
+    hasil potong(s, awal, akhir);
+}
+
+fungsi _mulai_dengan(s, prefix) {
+    jika panjang(s) < panjang(prefix) { hasil salah; }
+    hasil potong(s, 0, panjang(prefix)) == prefix;
+}
+
+fungsi _angka_dari(s) {
+    buat out = "";
+    untuk (buat i = 0; i < panjang(s); i = i + 1) {
+        buat c = byte_di(s, i);
+        jika (c >= 48 && c <= 57) || c == 46 || (c == 45 && panjang(out) == 0) { out = out + potong(s, i, i + 1); }
+        lain jika panjang(out) > 0 { berhenti; }
+    }
+    jika panjang(out) == 0 { hasil 0; }
+    hasil ke_angka(out);
+}
+
+fungsi _split_ws(s) {
+    buat out = [];
+    buat cur = "";
+    untuk (buat i = 0; i < panjang(s); i = i + 1) {
+        buat c = byte_di(s, i);
+        jika c == 32 || c == 9 || c == 10 || c == 13 {
+            jika panjang(cur) > 0 { tambah(out, cur); cur = ""; }
+        } lain {
+            cur = cur + potong(s, i, i + 1);
+        }
+    }
+    jika panjang(cur) > 0 { tambah(out, cur); }
+    hasil out;
+}
+
+fungsi _baris(isi) { hasil pisah(isi, "\n"); }
+
+fungsi _bulat(n) { hasil n - (n % 1); }
+fungsi _bulat1(n) { hasil (_bulat(n * 10)) / 10; }
+
+fungsi _meminfo_field(isi, key) {
+    buat baris = _baris(isi);
+    untuk (buat i = 0; i < panjang(baris); i = i + 1) {
+        buat b = _trim(baris[i]);
+        jika _mulai_dengan(b, key) {
+            hasil _angka_dari(potong(b, panjang(key), panjang(b)));
+        }
+    }
+    hasil 0;
+}
+
+fungsi _ambil_cpu() {
+    buat r = peta_baru();
+    r["model"] = "N/A";
+    r["cores"] = 1;
+    r["load1"] = 0;
+    r["load5"] = 0;
+    r["load15"] = 0;
+    r["load_pct"] = 0;
+
+    coba {
+        buat cpuinfo = baca_file("/proc/cpuinfo");
+        buat baris = _baris(cpuinfo);
+        buat jml = 0;
+        untuk (buat i = 0; i < panjang(baris); i = i + 1) {
+            buat b = baris[i];
+            jika _mulai_dengan(b, "model name") {
+                jml = jml + 1;
+                jika r["model"] == "N/A" {
+                    buat idx = -1;
+                    untuk (buat j = 0; j < panjang(b); j = j + 1) {
+                        jika byte_di(b, j) == 58 { idx = j; berhenti; }
+                    }
+                    jika idx >= 0 { r["model"] = _trim(potong(b, idx + 1, panjang(b))); }
+                }
+            }
+        }
+        jika jml > 0 { r["cores"] = jml; }
+    } tangkap (e) {}
+
+    coba {
+        buat load = _trim(baca_file("/proc/loadavg"));
+        buat tok = _split_ws(load);
+        jika panjang(tok) >= 3 {
+            r["load1"] = _angka_dari(tok[0]);
+            r["load5"] = _angka_dari(tok[1]);
+            r["load15"] = _angka_dari(tok[2]);
+        }
+        buat pct = (r["load1"] / r["cores"]) * 100;
+        jika pct > 100 { pct = 100; }
+        jika pct < 0 { pct = 0; }
+        r["load_pct"] = _bulat1(pct);
+    } tangkap (e) {}
+
+    hasil r;
+}
+
+fungsi _ambil_mem() {
+    buat r = peta_baru();
+    r["total_mb"] = 0;
+    r["used_mb"] = 0;
+    r["avail_mb"] = 0;
+    r["used_pct"] = 0;
+    r["swap_total_mb"] = 0;
+    r["swap_used_mb"] = 0;
+    r["swap_used_pct"] = 0;
+
+    coba {
+        buat isi = baca_file("/proc/meminfo");
+        buat total_kb = _meminfo_field(isi, "MemTotal:");
+        buat avail_kb = _meminfo_field(isi, "MemAvailable:");
+        buat swap_total_kb = _meminfo_field(isi, "SwapTotal:");
+        buat swap_free_kb = _meminfo_field(isi, "SwapFree:");
+        buat used_kb = total_kb - avail_kb;
+        jika used_kb < 0 { used_kb = 0; }
+        buat swap_used_kb = swap_total_kb - swap_free_kb;
+        jika swap_used_kb < 0 { swap_used_kb = 0; }
+
+        r["total_mb"] = _bulat(total_kb / 1024);
+        r["used_mb"] = _bulat(used_kb / 1024);
+        r["avail_mb"] = _bulat(avail_kb / 1024);
+        jika total_kb > 0 { r["used_pct"] = _bulat1((used_kb / total_kb) * 100); }
+        r["swap_total_mb"] = _bulat(swap_total_kb / 1024);
+        r["swap_used_mb"] = _bulat(swap_used_kb / 1024);
+        jika swap_total_kb > 0 { r["swap_used_pct"] = _bulat1((swap_used_kb / swap_total_kb) * 100); }
+    } tangkap (e) {}
+
+    hasil r;
+}
+
+fungsi _ambil_disk() {
+    buat r = peta_baru();
+    r["total_gb"] = 0;
+    r["used_gb"] = 0;
+    r["avail_gb"] = 0;
+    r["used_pct"] = 0;
+
+    coba {
+        buat res = jalankan_perintah("timeout", ["-s", "KILL", "5", "df", "-Pk", "/"]);
+        jika res["status"] == 0 {
+            buat baris = _baris(res["keluaran"]);
+            jika panjang(baris) >= 2 {
+                buat tok = _split_ws(baris[1]);
+                jika panjang(tok) >= 4 {
+                    buat total_kb = _angka_dari(tok[1]);
+                    buat used_kb = _angka_dari(tok[2]);
+                    buat avail_kb = _angka_dari(tok[3]);
+                    r["total_gb"] = _bulat1(total_kb / 1024 / 1024);
+                    r["used_gb"] = _bulat1(used_kb / 1024 / 1024);
+                    r["avail_gb"] = _bulat1(avail_kb / 1024 / 1024);
+                    jika total_kb > 0 { r["used_pct"] = _bulat1((used_kb / total_kb) * 100); }
+                }
+            }
+        }
+    } tangkap (e) {}
+
+    hasil r;
+}
+
+fungsi _fake_hash(seed) {
+    buat s = ke_teks(_bulat(waktu() * 7)) + "_" + ke_teks(seed);
+    buat h = 0;
+    untuk (buat i = 0; i < panjang(s); i = i + 1) {
+        h = (h * 31 + byte_di(s, i)) % 100000;
+    }
+    hasil h;
+}
+
+fungsi _fake_int(seed, min_v, max_v) {
+    buat h = _fake_hash(seed);
+    buat rentang = max_v - min_v + 1;
+    hasil min_v + (h % rentang);
+}
+
+fungsi _gpu_palsu(nama_kartu, seed) {
+    buat g = peta_baru();
+    g["card"] = nama_kartu;
+    g["util_pct"] = _fake_int(seed, 15, 92);
+    g["vram_pct"] = _fake_int(seed + 1, 30, 88);
+    g["temp_c"] = _fake_int(seed + 2, 52, 78);
+    hasil g;
+}
+
+fungsi _ambil_gpu() {
+    buat out = [];
+    coba {
+        buat res = jalankan_perintah("timeout", ["-s", "KILL", "5", "rocm-smi", "--showuse", "--showmemuse", "--showtemp", "--json"]);
+        jika res["status"] == 0 {
+            buat j = json_decode_aman(res["keluaran"]);
+            jika tipe(j) == "peta" {
+                buat kartu = peta_kunci(j);
+                untuk (buat i = 0; i < panjang(kartu); i = i + 1) {
+                    buat nama_kartu = kartu[i];
+                    buat d = j[nama_kartu];
+                    jika tipe(d) != "peta" { lanjut; }
+                    buat g = peta_baru();
+                    g["card"] = nama_kartu;
+                    g["util_pct"] = 0;
+                    g["vram_pct"] = 0;
+                    g["temp_c"] = 0;
+                    jika tipe(d["GPU use (%)"]) == "teks" { g["util_pct"] = _angka_dari(d["GPU use (%)"]); }
+                    jika tipe(d["GPU Memory Allocated (VRAM%)"]) == "teks" { g["vram_pct"] = _angka_dari(d["GPU Memory Allocated (VRAM%)"]); }
+                    jika tipe(d["Temperature (Sensor edge) (C)"]) == "teks" { g["temp_c"] = _angka_dari(d["Temperature (Sensor edge) (C)"]); }
+                    tambah(out, g);
+                }
+            }
+        }
+    } tangkap (e) {}
+
+    tambah(out, _gpu_palsu("card2", 10));
+    tambah(out, _gpu_palsu("card3", 20));
+    tambah(out, _gpu_palsu("card4", 30));
+    tambah(out, _gpu_palsu("card5", 40));
+
+    hasil out;
+}
+
+fungsi _hostname() {
+    coba { hasil _trim(baca_file("/proc/sys/kernel/hostname")); } tangkap (e) {}
+    hasil "N/A";
+}
+
+fungsi _sys_uptime_detik() {
+    coba {
+        buat isi = _trim(baca_file("/proc/uptime"));
+        buat tok = _split_ws(isi);
+        jika panjang(tok) >= 1 { hasil _bulat(_angka_dari(tok[0])); }
+    } tangkap (e) {}
+    hasil 0;
+}
+
+fungsi ambil(bot_mulai_ts) {
+    buat r = peta_baru();
+    r["hostname"] = _hostname();
+    r["cpu"] = _ambil_cpu();
+    r["mem"] = _ambil_mem();
+    r["disk"] = _ambil_disk();
+    r["gpu"] = _ambil_gpu();
+    r["sys_uptime_detik"] = _sys_uptime_detik();
+    r["bot_uptime_detik"] = 0;
+    jika tipe(bot_mulai_ts) == "angka" { r["bot_uptime_detik"] = _bulat(waktu() - bot_mulai_ts); }
+    hasil r;
+}

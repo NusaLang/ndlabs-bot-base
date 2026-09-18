@@ -1,0 +1,46 @@
+
+buat _cp = muat_plugin("crypto");
+
+fungsi _hex(h) { hasil _cp["hex_decode"](h); }
+fungsi _unhex(s) { hasil _cp["hex_encode"](s); }
+
+fungsi CbcEnkripsi(key, iv, plaintext) {
+    hasil _hex(_cp["aes_enkripsi"](_unhex(plaintext), _unhex(key), "cbc", _unhex(iv)));
+}
+
+fungsi CbcDekripsi(key, iv, ciphertext) {
+    jika panjang(ciphertext) == 0 || panjang(ciphertext) % 16 != 0 {
+        lempar "ciphertext bukan kelipatan ukuran blok";
+    }
+    hasil _hex(_cp["aes_dekripsi"](_unhex(ciphertext), _unhex(key), "cbc", _unhex(iv)));
+}
+
+fungsi cbc_unpad_loose(src) {
+    jika panjang(src) == 0 { lempar "src kosong"; }
+    buat padLen = byte_di(src, panjang(src) - 1);
+    jika padLen > panjang(src) { lempar "padding lebih besar dari panjang"; }
+    hasil potong(src, 0, panjang(src) - padLen);
+}
+
+fungsi MediaEnkripsiStream(key, iv, mac_key, plaintext) {
+    buat ct = CbcEnkripsi(key, iv, plaintext);
+    buat mac_hex = hmac_sha256_hex(mac_key, iv + ct);
+    buat mac = _hex(potong(mac_hex, 0, 20));
+    buat data = ct + mac;
+    buat r = peta_baru();
+    r["data"] = data;
+    r["mac"] = mac;
+    r["plain_sha256"] = potong(sha256_hex(plaintext), 0, 64);
+    r["cipher_sha256"] = potong(sha256_hex(data), 0, 64);
+    r["size"] = panjang(plaintext);
+    hasil r;
+}
+
+fungsi MediaDekripsiStream(key, iv, mac_key, data) {
+    jika panjang(data) < 26 { lempar "data terlalu pendek"; }
+    buat ct = potong(data, 0, panjang(data) - 10);
+    buat mac = potong(data, panjang(data) - 10, panjang(data));
+    buat mac_hit = _hex(potong(hmac_sha256_hex(mac_key, iv + ct), 0, 20));
+    jika mac != mac_hit { lempar "MAC tidak cocok"; }
+    hasil CbcDekripsi(key, iv, ct);
+}

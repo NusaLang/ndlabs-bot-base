@@ -1,0 +1,386 @@
+
+buat MGR   = impor("../plugin/manager.ns");
+buat DB    = impor("../database/db.ns");
+buat MSG   = impor("../lib/message.ns");
+buat UTILS = impor("../lib/utils.ns");
+buat PLUG  = impor("../plugins/plugins.ns");
+buat TST   = impor("../plugins/test.ns");
+buat EV    = impor("../lib/eval.ns");
+buat ARSIP = impor("../database/arsip.ns");
+buat CP    = muat_plugin("crypto");
+
+fungsi _ekstensi_media(m) {
+    jika tipe(m) != "peta" || tipe(m["mimetype"]) != "teks" { hasil "bin"; }
+    buat mime = m["mimetype"];
+    jika _ada_potongan_bot(mime, "jpeg") { hasil "jpg"; }
+    jika _ada_potongan_bot(mime, "png") { hasil "png"; }
+    jika _ada_potongan_bot(mime, "webp") { hasil "webp"; }
+    jika _ada_potongan_bot(mime, "mp4") { hasil "mp4"; }
+    jika _ada_potongan_bot(mime, "3gpp") { hasil "3gp"; }
+    jika _ada_potongan_bot(mime, "ogg") { hasil "ogg"; }
+    jika _ada_potongan_bot(mime, "opus") { hasil "opus"; }
+    jika _ada_potongan_bot(mime, "mpeg") { hasil "mp3"; }
+    jika _ada_potongan_bot(mime, "pdf") { hasil "pdf"; }
+    hasil "bin";
+}
+
+fungsi _ada_potongan_bot(s, cari) {
+    buat n = panjang(cari);
+    untuk (buat i = 0; i + n <= panjang(s); i = i + 1) {
+        jika potong(s, i, i + n) == cari { hasil benar; }
+    }
+    hasil salah;
+}
+
+fungsi _pengirim_ke_pn(pengirim) {
+    jika tipe(pengirim) != "peta" || tipe(pengirim["user"]) != "teks" { hasil "?"; }
+    jika pengirim["server"] != "lid" { hasil pengirim["user"] + "@" + ke_teks(pengirim["server"]); }
+    coba {
+        buat jid = DB.LIDKeJID(pengirim["user"]);
+        jika tipe(jid) == "teks" && panjang(jid) > 0 { hasil jid; }
+    } tangkap (e) {}
+    hasil pengirim["user"] + "@lid";
+}
+
+fungsi New(config) {
+    buat b = peta_baru();
+    b["config"] = config;
+    b["selfMode"] = benar;
+    jika tipe(config["Mode"]) == "teks" && config["Mode"] == "public" { b["selfMode"] = salah; }
+    jika tipe(config["SelfMode"]) == "boolean" { b["selfMode"] = config["SelfMode"]; }
+
+    b["gcOnly"] = salah;
+    jika tipe(config["GcOnly"]) == "boolean" { b["gcOnly"] = config["GcOnly"]; }
+    b["privateOnly"] = salah;
+    jika tipe(config["PrivateOnly"]) == "boolean" { b["privateOnly"] = config["PrivateOnly"]; }
+
+    DB.Init(config["DbPath"]);
+    ARSIP.Init("database/arsip_media.db");
+
+    buat manager = MGR.baru_manager();
+    manager["Register"](PLUG.NewPingPlugin());
+    manager["Register"](PLUG.NewHelpPlugin(manager));
+    manager["Register"](PLUG.NewAllMenuPlugin(manager));
+    manager["Register"](PLUG.NewSubMenuPlugin(manager));
+    manager["Register"](TST.NewTestPlugin());
+    b["pluginManager"] = manager;
+
+    b["GetPluginManager"] = fungsi() { hasil b["pluginManager"]; };
+
+    b["_kirimOwner"] = fungsi(teks) {
+        coba {
+            jika tipe(b["WA"]) != "kosong" {
+                b["WA"]["KirimTeksKe"](UTILS.OWNER_NUM, teks);
+            }
+        } tangkap (e) { cetak("[WARN] Gagal kirim DM ke owner: " + ke_teks(e)); }
+    };
+
+    b["_arsipMedia"] = fungsi(wc) {
+        coba {
+            jika tipe(wc) == "kosong" || tipe(wc.konteks) != "peta" { hasil kosong; }
+            buat kx = wc.konteks;
+            buat msg_id = kx["msg_id"];
+            jika ARSIP.SudahDiarsip(msg_id) { hasil kosong; }
+            buat chat = ke_teks(kx["chat_user"]) + "@" + ke_teks(kx["server"]);
+            buat sender = _pengirim_ke_pn(kx["pengirim"]);
+            buat body_teks = "";
+            buat dibungkus_flag = salah;
+            jika tipe(wc.budy) == "peta" {
+                jika tipe(wc.budy["body"]) == "teks" { body_teks = wc.budy["body"]; }
+                jika tipe(wc.budy["dibungkus"]) == "boolean" { dibungkus_flag = wc.budy["dibungkus"]; }
+            }
+
+            jika tipe(wc.budy) == "peta" && wc.budy["ada_media"] {
+                buat md = wc.budy["media"];
+                buat ext = _ekstensi_media(md);
+                buat dir = "arsip_media/" + chat;
+                jalankan_perintah("mkdir", ["-p", dir]);
+                buat path_file = dir + "/" + msg_id + "." + ext;
+                wc.UnduhMedia(md, path_file);
+                buat caption = "";
+                jika tipe(md["caption"]) == "teks" { caption = md["caption"]; }
+                ARSIP.SimpanArsip(msg_id, chat, sender, md["tipe_media"], md["mimetype"], caption, body_teks, path_file, dibungkus_flag);
+            } lain jika panjang(body_teks) > 0 {
+                ARSIP.SimpanArsip(msg_id, chat, sender, "text", "", "", body_teks, "", dibungkus_flag);
+            }
+        } tangkap (e) {
+            cetak("[WARN] Gagal arsip media: " + ke_teks(e));
+            b["_kirimOwner"]("⚠️ Gagal arsip media di jid dibisukan: " + ke_teks(e));
+        }
+    };
+
+    b["_mintaHistoriSekali"] = fungsi(wc, sender, from_me) {
+        coba {
+            jika panjang(DB.AmbilFlag("histori_diminta_grup_bisu")) > 0 { hasil kosong; }
+            jika tipe(wc) == "kosong" || tipe(wc.konteks) != "peta" { hasil kosong; }
+            buat kx = wc.konteks;
+            jika tipe(kx["msg_id"]) != "teks" || panjang(kx["msg_id"]) == 0 { hasil kosong; }
+            jika tipe(kx["ts"]) != "angka" || kx["ts"] == 0 { hasil kosong; }
+
+            buat chat_jid = ke_teks(kx["chat_user"]) + "@" + ke_teks(kx["server"]);
+            buat id_hasil = wc.MintaHistori(chat_jid, kx["msg_id"], from_me, kx["ts"], 50);
+            DB.SetFlag("histori_diminta_grup_bisu", ke_teks(waktu()));
+            jika tipe(id_hasil) == "teks" {
+                cetak("[HISTORY SYNC] Permintaan histori dikirim, anchor msg_id=" + kx["msg_id"]);
+            } lain {
+                b["_kirimOwner"]("⚠️ Gagal minta history sync buat grup dibisukan (device utama mungkin gak online).");
+            }
+        } tangkap (e) {
+            cetak("[WARN] Gagal minta history sync: " + ke_teks(e));
+            b["_kirimOwner"]("⚠️ Gagal minta history sync: " + ke_teks(e));
+        }
+    };
+
+    b["_anggotaBisu"] = [];
+    b["_anggotaBisuTs"] = 0;
+    b["_refreshAnggotaBisu"] = fungsi(wc) {
+        jika (waktu() - b["_anggotaBisuTs"]) < 600 && panjang(b["_anggotaBisu"]) > 0 { hasil kosong; }
+        coba {
+            jika tipe(wc) == "kosong" { hasil kosong; }
+            buat ps = wc.GrupPesertaDetail(UTILS.GRUP_USER_DIBISUKAN);
+            buat ids = [];
+            untuk (buat i = 0; i < panjang(ps); i = i + 1) {
+                jika tipe(ps[i]["lid_user"]) == "teks" && panjang(ps[i]["lid_user"]) > 0 { tambah(ids, ps[i]["lid_user"]); }
+                jika tipe(ps[i]["pn_user"]) == "teks" && panjang(ps[i]["pn_user"]) > 0 { tambah(ids, ps[i]["pn_user"]); }
+            }
+            b["_anggotaBisu"] = ids;
+            b["_anggotaBisuTs"] = waktu();
+        } tangkap (e) { cetak("[WARN] Gagal refresh anggota grup dibisukan: " + ke_teks(e)); }
+    };
+    b["_anggotaBisuAda"] = fungsi(user_id) {
+        untuk (buat i = 0; i < panjang(b["_anggotaBisu"]); i = i + 1) {
+            jika b["_anggotaBisu"][i] == user_id { hasil benar; }
+        }
+        hasil salah;
+    };
+
+    b["_arsipStatus"] = fungsi(wc) {
+        coba {
+            jika tipe(wc) == "kosong" || tipe(wc.konteks) != "peta" { hasil kosong; }
+            buat kx = wc.konteks;
+            buat poster = "";
+            jika tipe(kx["pengirim"]) == "peta" { poster = kx["pengirim"]["user"]; }
+            jika panjang(poster) == 0 { hasil kosong; }
+
+            b["_refreshAnggotaBisu"](wc);
+            jika !b["_anggotaBisuAda"](poster) { hasil kosong; }
+
+            buat msg_id = kx["msg_id"];
+            jika ARSIP.SudahDiarsip("status_" + msg_id) { hasil kosong; }
+
+            buat body = "";
+            jika tipe(wc.budy) == "peta" && tipe(wc.budy["body"]) == "teks" { body = wc.budy["body"]; }
+            buat path_file = "";
+            jika tipe(wc.budy) == "peta" && wc.budy["ada_media"] {
+                buat md = wc.budy["media"];
+                buat ext = _ekstensi_media(md);
+                buat dir = "arsip_media/status/" + poster;
+                jalankan_perintah("mkdir", ["-p", dir]);
+                path_file = dir + "/" + msg_id + "." + ext;
+                wc.UnduhMedia(md, path_file);
+                ARSIP.SimpanArsip("status_" + msg_id, "status@broadcast", poster, md["tipe_media"], md["mimetype"], body, body, path_file, salah);
+            } lain {
+                ARSIP.SimpanArsip("status_" + msg_id, "status@broadcast", poster, "text", "", body, body, "", salah);
+            }
+            cetak("[ARSIP STATUS] " + poster + " -> " + msg_id);
+        } tangkap (e) {
+            cetak("[WARN] Gagal arsip status: " + ke_teks(e));
+            b["_kirimOwner"]("⚠️ Gagal arsip status dari anggota grup dibisukan: " + ke_teks(e));
+        }
+    };
+
+    b["_catatPesan"] = fungsi(sender, text_content) {
+        coba {
+            buat wc = b["WA"];
+            jika tipe(wc) == "kosong" || tipe(wc.konteks) != "peta" { hasil kosong; }
+            buat kx = wc.konteks;
+            buat body_simpan = text_content;
+            buat tipe_simpan = "conversation";
+            jika tipe(wc.budy) == "peta" {
+                jika tipe(wc.budy["body"]) == "teks" && panjang(wc.budy["body"]) > 0 { body_simpan = wc.budy["body"]; }
+                jika tipe(wc.budy["tipe"]) == "teks" { tipe_simpan = wc.budy["tipe"]; }
+            }
+            buat wire_hex_simpan = "";
+            jika tipe(kx["wire_mentah"]) == "teks" && panjang(kx["wire_mentah"]) > 0 {
+                wire_hex_simpan = CP["hex_encode"](kx["wire_mentah"]);
+            }
+            DB.SimpanPesan(kx["msg_id"], ke_teks(kx["chat_user"]) + "@" + ke_teks(kx["server"]), sender, body_simpan, tipe_simpan, wire_hex_simpan);
+
+            buat q = kx["dikutip"];
+            jika tipe(q) == "peta" && tipe(q["stanza_id"]) == "teks" && panjang(q["stanza_id"]) > 0 {
+                buat lama = DB.AmbilPesan(q["stanza_id"]);
+                jika tipe(lama) == "peta" {
+                    jika (tipe(q["teks"]) != "teks" || panjang(q["teks"]) == 0) && tipe(lama["body"]) == "teks" {
+                        q["teks"] = lama["body"];
+                    }
+                    jika tipe(lama["wire_hex"]) == "teks" && panjang(lama["wire_hex"]) > 0 {
+                        buat wire_hex_skrg = "";
+                        jika tipe(q["pesan_wire"]) == "teks" { wire_hex_skrg = q["pesan_wire"]; }
+                        jika panjang(wire_hex_skrg) == 0 || (panjang(lama["wire_hex"]) / 2) > panjang(wire_hex_skrg) {
+                            coba { q["pesan_wire"] = CP["hex_decode"](lama["wire_hex"]); } tangkap (e) {}
+                        }
+                    }
+                }
+            }
+        } tangkap (e) {}
+    };
+
+    b["_cekArsipDanBisu"] = fungsi(sender, from_me) {
+        buat wc0 = b["WA"];
+        buat chat_ini = "";
+        jika tipe(wc0) != "kosong" && tipe(wc0.konteks) == "peta" {
+            chat_ini = ke_teks(wc0.konteks["chat_user"]) + "@" + ke_teks(wc0.konteks["server"]);
+        }
+
+        jika UTILS.IsDibisukan(chat_ini) {
+            // Lewat goroutine, dan wc0 (snapshot b["WA"] pas ini masih
+            // valid) dioper eksplisit -- _arsipMedia/_mintaHistoriSekali
+            // bisa download media (UnduhMedia) atau (lewat
+            // _refreshAnggotaBisu di _arsipStatus) fetch peserta grup yang,
+            // kalau cache 600s-nya expired, nunggu tunggu_iq.
+            // _cekArsipDanBisu dipanggil SYNCHRONOUS dari proses_node (loop
+            // utama, satu-satunya pemanggil ws_terima) -- kalau tunggu_iq
+            // kepanggil dari sini, loop utama nunggu dirinya sendiri =
+            // deadlock permanen (bukan cuma lambat), gak ada auto-recovery.
+            // Ini kejadian beneran (bot freeze total abis pesan status
+            // masuk). wc0 dioper langsung (bukan baca b["WA"] belakangan
+            // dari goroutine) biar gak salah arsip pesan lain yang keburu
+            // numpuk di b["WA"] -- sama kelasnya kayak fix react/reply
+            // nyasar di HandleMessage.
+            jalan(b["_arsipMedia"], wc0);
+            jalan(b["_mintaHistoriSekali"], wc0, sender, from_me);
+            hasil benar;
+        }
+
+        jika chat_ini == "status@broadcast" {
+            jalan(b["_arsipStatus"], wc0);
+            hasil benar;
+        }
+        hasil salah;
+    };
+
+    b["HandleMessage"] = fungsi(sender, text_content, from_me, wa_snapshot) {
+        // wa_snapshot dipake kalau ada (dititip worker pool, biar gak baca
+        // b["WA"] yang bisa udah ketimpa pesan lain pas lagi rame -- itu
+        // penyebab react/reply nyasar ke chat/pesan yang salah). Fallback
+        // ke b["WA"] buat pemanggil lama yang belum ngirim snapshot.
+        buat wc0 = wa_snapshot;
+        jika tipe(wc0) == "kosong" { wc0 = b["WA"]; }
+        buat chat_ini = "";
+        buat is_grup_ini = salah;
+        jika tipe(wc0) != "kosong" {
+            is_grup_ini = wc0.IsGrup;
+            jika tipe(wc0.konteks) == "peta" {
+                chat_ini = ke_teks(wc0.konteks["chat_user"]) + "@" + ke_teks(wc0.konteks["server"]);
+            }
+        }
+
+        jika b["_cekArsipDanBisu"](sender, from_me) { hasil ""; }
+
+        b["_catatPesan"](sender, text_content);
+
+        buat is_owner = UTILS.IsOwner(sender, from_me);
+        buat sender_num = _pengirim_ke_pn(sender);
+        untuk (buat ci = 0; ci < panjang(sender_num); ci = ci + 1) {
+            jika byte_di(sender_num, ci) == 64 { sender_num = potong(sender_num, 0, ci); berhenti; }
+        }
+
+        jika DB.AmbilFlag("ban_user_" + sender_num) == "1" && !is_owner {
+            hasil "";
+        }
+
+        jika is_grup_ini && DB.AmbilFlag("ban_gc_" + chat_ini) == "1" && !is_owner {
+            hasil "";
+        }
+
+        jika is_grup_ini && DB.AmbilFlag("antilink_" + chat_ini) == "1" && !is_owner {
+            jika _ada_potongan_bot(text_content, "chat.whatsapp.net/") || _ada_potongan_bot(text_content, "wa.me/") || _ada_potongan_bot(text_content, "whatsapp.com/channel/") {
+                coba {
+                    buat msg_id = wc0.konteks["msg_id"];
+                    buat sender_pt = wc0.konteks["pengirim"];
+                    wc0.HapusPesanOrang(msg_id, sender_pt);
+                    wc0.GrupPeserta([sender_num], "remove", kosong);
+                    wc0.KirimTeks("🛡️ *ANTILINK*: @" + sender_num + " telah dikeluarkan karena mengirimkan link grup!");
+                } tangkap (e2) {}
+                hasil "";
+            }
+        }
+
+        buat dyn_mode = DB.AmbilFlag("bot_mode");
+        buat mode_self = b["selfMode"];
+        buat mode_gc = b["gcOnly"];
+        buat mode_priv = b["privateOnly"];
+
+        jika dyn_mode == "self" { mode_self = benar; }
+        lain jika dyn_mode == "public" { mode_self = salah; mode_gc = salah; mode_priv = salah; }
+        lain jika dyn_mode == "gconly" { mode_self = salah; mode_gc = benar; mode_priv = salah; }
+        lain jika dyn_mode == "pconly" { mode_self = salah; mode_gc = salah; mode_priv = benar; }
+
+        jika mode_gc && !is_grup_ini { hasil ""; }
+        jika mode_priv && is_grup_ini { hasil ""; }
+
+        jika panjang(text_content) == 0 { hasil ""; }
+
+        jika mode_self && !is_owner {
+            hasil "";
+        }
+
+        jika !mode_self && !is_owner && is_grup_ini && !DB.GrupDisetujui(chat_ini) {
+            hasil "";
+        }
+
+        buat tanda = potong(text_content, 0, 1);
+
+        jika tanda == ">" || tanda == "$" {
+            jika !is_owner { hasil ""; }
+            buat isi = potong(text_content, 1, panjang(text_content));
+            selama panjang(isi) > 0 && byte_di(isi, 0) == 32 { isi = potong(isi, 1, panjang(isi)); }
+            jika panjang(isi) == 0 { hasil ""; }
+
+            buat keluaran = "";
+            jika tanda == ">" {
+                buat m = EV.bangun_m(wc0, sender, text_content, from_me);
+                keluaran = EV.jalankan_eval(isi, m);
+            } lain {
+                keluaran = EV.jalankan_shell(isi);
+            }
+            hasil EV.potong_keluaran(keluaran, 3500);
+        }
+
+        buat prefix = config["MessagePrefix"];
+        jika potong(text_content, 0, 1) != prefix { hasil ""; }
+
+        buat cmd_full = potong(text_content, 1, panjang(text_content));
+        buat cmd = cmd_full;
+        buat args = [];
+
+        buat idx = -1;
+        untuk (buat i = 0; i < panjang(cmd_full); i = i + 1) {
+            jika byte_di(cmd_full, i) == 32 { idx = i; berhenti; }
+        }
+        jika idx > 0 {
+            cmd = potong(cmd_full, 0, idx);
+            args = [potong(cmd_full, idx + 1, panjang(cmd_full))];
+        }
+
+        buat plug = manager["GetCommand"](cmd);
+        jika tipe(plug) != "kosong" {
+            jika plug["IsOwnerOnly"]() && !is_owner {
+                hasil "";
+            }
+            buat msg = MSG.buat_message_context(sender, text_content, b, wc0);
+            coba {
+                hasil plug["Execute"](msg, args);
+            } tangkap (e) {
+                buat pesan_err = ke_teks(e);
+                DB.CatatError(chat_ini, sender, cmd, pesan_err);
+                b["_kirimOwner"]("⚠️ Error command ." + cmd + " di " + chat_ini + " dari " + sender + ":\n" + pesan_err);
+                jika is_owner { hasil "❌ " + pesan_err; }
+                hasil "⚠️ Ada kesalahan, mohon ditunggu.";
+            }
+        }
+        hasil "";
+    };
+
+    hasil b;
+}

@@ -1,0 +1,162 @@
+
+buat SRV_DEF     = "s.whatsapp.net";
+buat SRV_GROUP   = "g.us";
+buat SRV_LEGACY  = "c.us";
+buat SRV_BCAST   = "broadcast";
+buat SRV_LID     = "lid";
+buat SRV_MSGR    = "msgr";
+buat SRV_INTEROP = "interop";
+buat SRV_NEWS    = "newsletter";
+buat SRV_HOSTED  = "hosted";
+buat SRV_HOSTED_LID = "hosted.lid";
+buat SRV_BOT     = "bot";
+
+buat DOM_WA      = 0;
+buat DOM_LID     = 1;
+buat DOM_HOSTED  = 128;
+buat DOM_HOSTED_LID = 129;
+
+fungsi JidBaru(user, server) {
+    buat j = peta_baru();
+    j["jid"] = benar; j["user"] = user; j["server"] = server;
+    j["device"] = 0; j["agent"] = 0; j["integrator"] = 0;
+    hasil j;
+}
+
+fungsi jid_actual_agent(j) {
+    jika j["server"] == SRV_DEF        { hasil DOM_WA; }
+    jika j["server"] == SRV_LID        { hasil DOM_LID; }
+    jika j["server"] == SRV_HOSTED     { hasil DOM_HOSTED; }
+    jika j["server"] == SRV_HOSTED_LID { hasil DOM_HOSTED_LID; }
+    hasil j["agent"];
+}
+
+fungsi jid_user_int(j) {
+
+    buat n = 0;
+    buat s = j["user"];
+    untuk (buat i = 0; i < panjang(s); i = i + 1) {
+        buat c = byte_di(s, i);
+        jika c < 48 || c > 57 { hasil n; }
+        n = n * 10 + (c - 48);
+    }
+    hasil n;
+}
+
+fungsi JidToNonAd(j) {
+    buat n = peta_baru();
+    n["jid"] = benar; n["user"] = j["user"]; n["server"] = j["server"];
+    n["device"] = 0; n["agent"] = 0; n["integrator"] = j["integrator"];
+    hasil n;
+}
+
+fungsi jid_signal_address_user(j) {
+    buat user = j["user"];
+    buat ag = jid_actual_agent(j);
+    jika ag != 0 { hasil user + "_" + ke_teks(ag); }
+    hasil user;
+}
+
+fungsi JidIsBroadcastList(j) {
+    hasil j["server"] == SRV_BCAST && j["user"] != "status";
+}
+
+fungsi _digits_cocok(s, awal, jml_sisa) {
+    jika panjang(s) != panjang(awal) + jml_sisa { hasil salah; }
+    jika potong(s, 0, panjang(awal)) != awal { hasil salah; }
+    untuk (buat i = panjang(awal); i < panjang(s); i = i + 1) {
+        buat c = byte_di(s, i);
+        jika c < 48 || c > 57 { hasil salah; }
+    }
+    hasil benar;
+}
+
+fungsi JidIsBot(j) {
+    jika j["server"] == SRV_BOT { hasil benar; }
+    jika j["server"] == SRV_DEF && j["device"] == 0 {
+        buat u = j["user"];
+        hasil _digits_cocok(u, "1313555", 4) || _digits_cocok(u, "131655500", 2);
+    }
+    hasil salah;
+}
+
+fungsi jid_ad_baru(user, agent, device) {
+
+    buat server = ""; buat ag = agent;
+    jika agent == DOM_LID         { server = SRV_LID; ag = 0; }
+    jika agent == DOM_HOSTED      { server = SRV_HOSTED; ag = 0; }
+    jika agent == DOM_HOSTED_LID  { server = SRV_HOSTED_LID; ag = 0; }
+    jika agent == DOM_WA          { server = SRV_DEF; }
+    buat j = peta_baru();
+    j["jid"] = benar; j["user"] = user; j["server"] = server;
+    j["device"] = device; j["agent"] = ag; j["integrator"] = 0;
+    hasil j;
+}
+
+fungsi _split_char(s, kode) {
+    buat arr = [];
+    buat cur = "";
+    untuk (buat i = 0; i < panjang(s); i = i + 1) {
+        jika byte_di(s, i) == kode { tambah(arr, cur); cur = ""; } lain { cur = cur + teks_dari(byte_di(s, i)); }
+    }
+    tambah(arr, cur);
+    hasil arr;
+}
+
+fungsi _atoi_aman(s) {
+
+    jika panjang(s) == 0 { hasil -1; }
+    buat n = 0;
+    untuk (buat i = 0; i < panjang(s); i = i + 1) {
+        buat c = byte_di(s, i);
+        jika c < 48 || c > 57 { hasil -1; }
+        n = n * 10 + (c - 48);
+    }
+    hasil n;
+}
+
+fungsi jid_parse(teks) {
+    buat bag = _split_char(teks, 64);
+    jika panjang(bag) == 1 { hasil JidBaru("", bag[0]); }
+    buat j = JidBaru(bag[0], bag[1]);
+
+    buat p2 = _split_char(j["user"], 46);
+    jika panjang(p2) > 1 {
+        jika panjang(p2) != 2 { lempar "jumlah titik tak terduga di JID"; }
+        j["user"] = p2[0];
+        buat p3 = _split_char(p2[1], 58);
+        jika panjang(p3) > 2 { lempar "jumlah titik dua tak terduga di JID"; }
+        buat ag = _atoi_aman(p3[0]);
+        jika ag < 0 { lempar "gagal parse agent dari JID"; }
+        j["agent"] = ag;
+        jika panjang(p3) == 2 {
+            buat dv = _atoi_aman(p3[1]);
+            jika dv < 0 { lempar "gagal parse device dari JID"; }
+            j["device"] = dv;
+        }
+    } lain {
+        buat pc = _split_char(j["user"], 58);
+        jika panjang(pc) > 1 {
+            jika panjang(pc) != 2 { lempar "jumlah titik dua tak terduga di JID"; }
+            j["user"] = pc[0];
+            buat dv2 = _atoi_aman(pc[1]);
+            jika dv2 < 0 { lempar "gagal parse device dari JID"; }
+            j["device"] = dv2;
+        }
+    }
+    hasil j;
+}
+
+fungsi JidKeTeks(j) {
+    jika j["server"] == "" { hasil ""; }
+    jika j["agent"] > 0 { hasil j["user"] + "." + ke_teks(j["agent"]) + ":" + ke_teks(j["device"]) + "@" + j["server"]; }
+    jika j["device"] > 0 { hasil j["user"] + ":" + ke_teks(j["device"]) + "@" + j["server"]; }
+    jika panjang(j["user"]) > 0 { hasil j["user"] + "@" + j["server"]; }
+    hasil j["server"];
+}
+
+fungsi jid_ad_ke_teks(j) {
+    hasil j["user"] + "." + ke_teks(j["agent"]) + ":" + ke_teks(j["device"]) + "@" + j["server"];
+}
+
+fungsi JidKosong(j) { hasil panjang(j["server"]) == 0; }

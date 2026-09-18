@@ -1,0 +1,17 @@
+
+buat PP = impor("../proto/pin.ns");
+buat LTH = impor("../appstate/lthash.ns");
+
+fungsi sematkan_pesan_chat(remote_jid, from_me, msg_id, is_pin, expiration_seconds) {
+    hasil PP.EnkodePinInChatMessage(remote_jid, from_me, msg_id, is_pin, expiration_seconds);
+}
+
+fungsi buat_patch_pin_chat(target_jid, is_pinned) {
+
+    buat action_bin = PP.EnkodePinAction(is_pinned);
+    buat patch = peta_baru();
+    patch["type"] = "regular_low";
+    patch["index"] = ["pin_v1", target_jid];
+    patch["action_bin"] = action_bin;
+    hasil patch;
+}

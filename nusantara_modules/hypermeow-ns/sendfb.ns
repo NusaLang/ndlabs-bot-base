@@ -1,0 +1,277 @@
+buat PB = impor("proto/pb.ns");
+buat CP = muat_plugin("crypto");
+
+buat FB_VERSI_PESAN          = 3;
+buat FB_VERSI_APP_MESSAGE    = 2;
+buat FB_VERSI_APP_IG         = 3;
+buat FB_VERSI_CONSUMER       = 1;
+buat FB_VERSI_ARMADILLO      = 1;
+buat FB_TAG_SUB_CONSUMER     = 2;
+buat FB_TAG_SUB_ARMADILLO    = 7;
+buat FB_BACKUP_ACTION_UPSERT = 1;
+
+fungsi _fb_node(tag, attrs, children, content) {
+    buat n = peta_baru();
+    n["tag"] = tag;
+    jika tipe(attrs) == "peta" { n["attrs"] = attrs; } lain { n["attrs"] = peta_baru(); }
+    jika tipe(children) == "larik" { n["children"] = children; } lain { n["children"] = []; }
+    jika tipe(content) == "teks" { n["content"] = content; n["ada_isi"] = benar; }
+    lain jika panjang(n["children"]) > 0 { n["content"] = kosong; n["ada_isi"] = benar; }
+    lain { n["content"] = kosong; n["ada_isi"] = salah; }
+    hasil n;
+}
+
+fungsi _fb_byte_ulang(v, n) {
+    buat s = "";
+    untuk (buat i = 0; i < n; i = i + 1) { s = s + teks_dari(v); }
+    hasil s;
+}
+
+fungsi fb_pad(pt) {
+    buat p = byte_di(CP["hex_decode"](CP["acak_bytes_hex"](1)), 0) % 16;
+    jika p == 0 { p = 15; }
+    hasil pt + _fb_byte_ulang(p, p);
+}
+
+fungsi fb_acak_bytes(n) {
+    hasil CP["hex_decode"](CP["acak_bytes_hex"](n));
+}
+
+fungsi fb_bangun_subprotocol(payload, versi) {
+    hasil PB.PbBytes(1, payload) + PB.PbVarint(2, versi);
+}
+
+fungsi fb_bangun_metadata(franking_key, metadata_ekstra) {
+    buat m = "";
+    jika tipe(metadata_ekstra) == "teks" { m = m + metadata_ekstra; }
+    m = m + PB.PbBytes(8, franking_key);
+    m = m + PB.PbVarint(9, 0);
+    hasil m;
+}
+
+fungsi fb_bangun_message_application(sub_tag, sub_wire, sub_versi, metadata_wire) {
+    jika sub_tag != FB_TAG_SUB_CONSUMER && sub_tag != FB_TAG_SUB_ARMADILLO {
+        lempar "tipe subprotocol fb tidak didukung: " + ke_teks(sub_tag);
+    }
+    buat sp = PB.PbVarint(1, 0) + PB.PbBytes(sub_tag, fb_bangun_subprotocol(sub_wire, sub_versi));
+    buat payload = PB.PbBytes(4, sp);
+    buat app = PB.PbBytes(1, payload);
+    jika tipe(metadata_wire) == "teks" && panjang(metadata_wire) > 0 {
+        app = app + PB.PbBytes(2, metadata_wire);
+    }
+    hasil app;
+}
+
+fungsi fb_franking_tag(franking_key, message_app) {
+    hasil CP["hex_decode"](hmac_sha256_hex(message_app, franking_key));
+}
+
+fungsi fb_bangun_transport_payload(message_app, versi_app) {
+    hasil PB.PbBytes(1, fb_bangun_subprotocol(message_app, versi_app)) + PB.PbVarint(3, 0);
+}
+
+fungsi fb_bangun_dsm(destination_jid_teks, phash) {
+    buat d = PB.PbBytes(1, destination_jid_teks);
+    jika tipe(phash) == "teks" { d = d + PB.PbBytes(2, phash); } lain { d = d + PB.PbBytes(2, ""); }
+    hasil d;
+}
+
+fungsi fb_bangun_skdm(group_id_teks, axolotl_skdm) {
+    hasil PB.PbBytes(1, group_id_teks) + PB.PbBytes(2, axolotl_skdm);
+}
+
+fungsi fb_bangun_backup_directive(msg_id, action_type) {
+    hasil PB.PbBytes(1, msg_id) + PB.PbVarint(2, action_type);
+}
+
+fungsi fb_bangun_transport(payload_wire, dsm_wire, skdm_wire, backup_wire) {
+    buat integral = PB.PbBytes(1, fb_pad(""));
+    jika tipe(dsm_wire) == "teks" && panjang(dsm_wire) > 0 { integral = integral + PB.PbBytes(2, dsm_wire); }
+
+    buat ancillary = "";
+    jika tipe(skdm_wire) == "teks" && panjang(skdm_wire) > 0 { ancillary = ancillary + PB.PbBytes(2, skdm_wire); }
+    jika tipe(backup_wire) == "teks" && panjang(backup_wire) > 0 { ancillary = ancillary + PB.PbBytes(5, backup_wire); }
+
+    buat protocol = PB.PbBytes(1, integral) + PB.PbBytes(2, ancillary);
+
+    buat t = "";
+    jika tipe(payload_wire) == "teks" && panjang(payload_wire) > 0 { t = t + PB.PbBytes(1, payload_wire); }
+    hasil t + PB.PbBytes(2, protocol);
+}
+
+fungsi fb_atribut_baru() {
+    buat a = peta_baru();
+    a["type"] = "";
+    a["media_type"] = "";
+    a["edit"] = "";
+    a["decrypt_fail"] = "";
+    a["poll_type"] = "";
+    hasil a;
+}
+
+fungsi _fb_atribut_consumer(wire) {
+    buat a = fb_atribut_baru();
+    buat app = PB.PbDekode(wire);
+    jika tipe(app["1"]) != "teks" { a["type"] = "text"; hasil a; }
+    buat payload = PB.PbDekode(app["1"]);
+
+    jika tipe(payload["1"]) == "teks" {
+        buat c = PB.PbDekode(payload["1"]);
+        jika tipe(c["1"]) == "teks" || tipe(c["5"]) == "teks" { a["type"] = "text"; }
+        lain jika tipe(c["2"]) == "teks" { a["media_type"] = "image"; }
+        lain jika tipe(c["12"]) == "teks" { a["media_type"] = "sticker"; }
+        lain jika tipe(c["14"]) == "teks" {
+            buat vo = PB.PbDekode(c["14"]);
+            jika tipe(vo["1"]) == "teks" { a["media_type"] = "image"; }
+            lain jika tipe(vo["2"]) == "teks" { a["media_type"] = "video"; }
+        }
+        lain jika tipe(c["7"]) == "teks" { a["media_type"] = "document"; }
+        lain jika tipe(c["8"]) == "teks" {
+            buat au = PB.PbDekode(c["8"]);
+            jika au["2"] == 1 { a["media_type"] = "ptt"; } lain { a["media_type"] = "audio"; }
+        }
+        lain jika tipe(c["9"]) == "teks" { a["media_type"] = "video"; }
+        lain jika tipe(c["4"]) == "teks" || tipe(c["11"]) == "teks" { a["media_type"] = "location"; }
+        lain jika tipe(c["3"]) == "teks" { a["media_type"] = "vcard"; }
+        lain jika tipe(c["10"]) == "teks" { a["media_type"] = "contact_array"; }
+        lain jika tipe(c["17"]) == "teks" { a["poll_type"] = "creation"; a["type"] = "poll"; }
+        lain jika tipe(c["18"]) == "teks" { a["poll_type"] = "vote"; a["type"] = "poll"; a["decrypt_fail"] = "hide"; }
+        lain jika tipe(c["16"]) == "teks" { a["type"] = "reaction"; a["decrypt_fail"] = "hide"; }
+        lain jika tipe(c["19"]) == "teks" { a["edit"] = "1"; a["decrypt_fail"] = "hide"; }
+        jika panjang(a["media_type"]) > 0 && panjang(a["type"]) == 0 { a["type"] = "media"; }
+    }
+    lain jika tipe(payload["2"]) == "teks" {
+        buat ad = PB.PbDekode(payload["2"]);
+        jika tipe(ad["1"]) == "teks" {
+            buat rv = PB.PbDekode(ad["1"]);
+            buat dari_saya = salah;
+            jika tipe(rv["1"]) == "teks" {
+                buat key = PB.PbDekode(rv["1"]);
+                dari_saya = (key["2"] == 1);
+            }
+            jika dari_saya { a["edit"] = "7"; } lain { a["edit"] = "8"; }
+            a["decrypt_fail"] = "hide";
+        }
+    }
+    jika panjang(a["type"]) == 0 { a["type"] = "text"; }
+    hasil a;
+}
+
+fungsi fb_atribut_dari_pesan(kategori, wire) {
+    jika kategori == "consumer" { hasil _fb_atribut_consumer(wire); }
+    buat a = fb_atribut_baru();
+    jika kategori == "armadillo" {
+        a["type"] = "media";
+        a["media_type"] = "document";
+        hasil a;
+    }
+    a["type"] = "text";
+    hasil a;
+}
+
+fungsi fb_node_enc(ciphertext, tipe_enc, enc_attrs) {
+    buat a = peta_baru();
+    a["v"] = ke_teks(FB_VERSI_PESAN);
+    a["type"] = "msg";
+    jika tipe(tipe_enc) == "teks" && panjang(tipe_enc) > 0 { a["type"] = tipe_enc; }
+    jika tipe(enc_attrs) == "peta" {
+        buat ks = peta_kunci(enc_attrs);
+        untuk (buat i = 0; i < panjang(ks); i = i + 1) { a[ks[i]] = enc_attrs[ks[i]]; }
+    }
+    hasil _fb_node("enc", a, [], ciphertext);
+}
+
+fungsi fb_node_to(jid_peta, enc_node) {
+    buat a = peta_baru();
+    a["jid"] = jid_peta;
+    hasil _fb_node("to", a, [enc_node], kosong);
+}
+
+fungsi _fb_urut_teks(list) {
+    buat out = [];
+    untuk (buat i = 0; i < panjang(list); i = i + 1) { tambah(out, list[i]); }
+    untuk (buat i = 1; i < panjang(out); i = i + 1) {
+        buat v = out[i];
+        buat j = i - 1;
+        selama (j >= 0 && out[j] > v) {
+            out[j + 1] = out[j];
+            j = j - 1;
+        }
+        out[j + 1] = v;
+    }
+    hasil out;
+}
+
+fungsi fb_phash(ad_string_list) {
+    buat s = _fb_urut_teks(ad_string_list);
+    buat gabung = "";
+    untuk (buat i = 0; i < panjang(s); i = i + 1) { gabung = gabung + s[i]; }
+    buat h = CP["hex_decode"](sha256_hex(gabung));
+    hasil "2:" + base64_encode(potong(h, 0, 6));
+}
+
+fungsi fb_bangun_node_pesan_v3(msg_id, tujuan_jid, atribut, participant_nodes, franking_tag) {
+    buat attrs = peta_baru();
+    attrs["id"] = msg_id;
+    attrs["type"] = atribut["type"];
+    attrs["to"] = tujuan_jid;
+    jika panjang(atribut["edit"]) > 0 { attrs["edit"] = atribut["edit"]; }
+
+    buat isi = [_fb_node("participants", peta_baru(), participant_nodes, kosong)];
+
+    buat meta = peta_baru();
+    buat ada_meta = salah;
+    jika panjang(atribut["poll_type"]) > 0 { meta["polltype"] = atribut["poll_type"]; ada_meta = benar; }
+    jika panjang(atribut["decrypt_fail"]) > 0 { meta["decrypt-fail"] = atribut["decrypt_fail"]; ada_meta = benar; }
+    jika ada_meta { tambah(isi, _fb_node("meta", meta, [], kosong)); }
+
+    tambah(isi, _fb_node("franking", peta_baru(), [_fb_node("franking_tag", peta_baru(), [], franking_tag)], kosong));
+    tambah(isi, _fb_node("trace", peta_baru(), [_fb_node("request_id", peta_baru(), [], fb_acak_bytes(16))], kosong));
+
+    hasil _fb_node("message", attrs, isi, kosong);
+}
+
+fungsi fb_atribut_enc(atribut, ada_payload) {
+    buat a = peta_baru();
+    jika ada_payload && panjang(atribut["media_type"]) > 0 { a["mediatype"] = atribut["media_type"]; }
+    jika panjang(atribut["decrypt_fail"]) > 0 { a["decrypt-fail"] = atribut["decrypt_fail"]; }
+    hasil a;
+}
+
+fungsi fb_bangun_node_grup_v3(node, phash, skmsg_wire, media_type) {
+    node["attrs"]["phash"] = phash;
+    buat a = peta_baru();
+    a["v"] = ke_teks(FB_VERSI_PESAN);
+    a["type"] = "skmsg";
+    jika tipe(media_type) == "teks" && panjang(media_type) > 0 { a["mediatype"] = media_type; }
+    tambah(node["children"], _fb_node("enc", a, [], skmsg_wire));
+    node["ada_isi"] = benar;
+    hasil node;
+}
+
+fungsi fb_urai_respons_kirim(node) {
+    buat r = peta_baru();
+    r["ok"] = salah;
+    r["server_id"] = 0;
+    r["timestamp"] = 0;
+    r["error"] = 0;
+    r["phash"] = "";
+    jika tipe(node) != "peta" { hasil r; }
+    buat a = node["attrs"];
+    jika tipe(a) != "peta" { hasil r; }
+    jika tipe(a["server_id"]) == "teks" { r["server_id"] = ke_angka(a["server_id"]); }
+    jika tipe(a["t"]) == "teks" { r["timestamp"] = ke_angka(a["t"]); }
+    jika tipe(a["error"]) == "teks" { r["error"] = ke_angka(a["error"]); }
+    jika tipe(a["phash"]) == "teks" { r["phash"] = a["phash"]; }
+    r["ok"] = (r["error"] == 0);
+    hasil r;
+}
+
+fungsi fb_phash_beda(phash_kita, phash_server) {
+    jika tipe(phash_server) != "teks" || panjang(phash_server) == 0 { hasil salah; }
+    hasil phash_kita != phash_server;
+}
+
+fungsi fb_kirim_pesan(k, tujuan_jid, kategori_pesan, pesan_wire, metadata_wire) {
+    lempar "belum didukung: SendFBMessage butuh sesi signal v3 (session/group cipher) + fanout perangkat dari runtime client; pakai fb_bangun_message_application/fb_bangun_transport lalu kirim lewat client.ns";
+}

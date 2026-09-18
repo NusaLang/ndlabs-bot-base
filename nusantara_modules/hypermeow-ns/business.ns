@@ -1,0 +1,1968 @@
+buat PB  = impor("proto/pb.ns");
+buat MS  = impor("msgsend.ns");
+buat JIDM = impor("types/jid.ns");
+buat CP  = muat_plugin("crypto");
+
+buat BIZ_SERVER      = "s.whatsapp.net";
+buat BIZ_SERVER_LID  = "lid";
+
+buat BIZ_ENDPOINT_KATALOG  = "https://graph.whatsapp.com/graphql/catalog";
+buat BIZ_ENDPOINT_GRAPHQL  = "https://graph.facebook.com/graphql";
+buat BIZ_TOKEN_KATALOG     = "WA|787118555984857|7bb1544a3599aa180ac9a3f7688ba243";
+
+buat BIZ_Q_KATALOG            = "30445081048424116";
+buat BIZ_Q_PRODUK_KATALOG     = "9660926520672123";
+buat BIZ_Q_KOLEKSI            = "9430970660362540";
+buat BIZ_Q_DAFTAR_PRODUK      = "30125049463760630";
+buat BIZ_Q_KOLEKSI_TUNGGAL    = "9546992575408789";
+
+buat BIZ_M_BUAT_KOLEKSI       = "29361942130088470";
+buat BIZ_M_HAPUS_KOLEKSI      = "29970196299234260";
+buat BIZ_M_UBAH_KOLEKSI       = "24486970300891371";
+buat BIZ_M_URUT_KOLEKSI       = "9930298893688430";
+buat BIZ_M_BUAT_KATALOG       = "29232780583035464";
+buat BIZ_M_UBAH_COMMERCE      = "9797519763673469";
+buat BIZ_M_VISIBILITAS_PRODUK = "9665162096898581";
+buat BIZ_M_BANDING_PRODUK     = "29276343172013990";
+buat BIZ_M_BANDING_KOLEKSI    = "9971242039605207";
+buat BIZ_M_TAMBAH_PRODUK      = "24249359867999500";
+buat BIZ_M_UBAH_PRODUK        = "9889773371084956";
+buat BIZ_M_HAPUS_PRODUK       = "9376108569185474";
+buat BIZ_Q_KEPATUHAN          = "25960403573553316";
+buat BIZ_M_KEPATUHAN          = "25188352884120072";
+
+buat BIZ_MAKS_ITEM_KOLEKSI    = 100;
+buat BIZ_MAKS_PINDAH_KOLEKSI  = 100;
+buat BIZ_MAKS_ALASAN_BANDING  = 4096;
+buat BIZ_MAKS_GAMBAR_PRODUK   = 16777216;
+buat BIZ_MAKS_COVER           = 5242880;
+buat BIZ_MAKS_RESPONS_GRAPHQL = 4194304;
+
+fungsi _biz_node(tag, attrs, children, content) {
+    buat n = peta_baru();
+    n["tag"] = tag;
+    jika tipe(attrs) == "peta" { n["attrs"] = attrs; } lain { n["attrs"] = peta_baru(); }
+    jika tipe(children) == "larik" { n["children"] = children; } lain { n["children"] = []; }
+    jika tipe(content) == "teks" { n["content"] = content; n["ada_isi"] = benar; }
+    lain jika panjang(n["children"]) > 0 { n["content"] = kosong; n["ada_isi"] = benar; }
+    lain { n["content"] = kosong; n["ada_isi"] = salah; }
+    hasil n;
+}
+
+fungsi _biz_jid(usr, srv) {
+    buat j = peta_baru();
+    j["jid"] = benar; j["user"] = usr; j["server"] = srv; j["device"] = 0; j["agent"] = 0;
+    hasil j;
+}
+
+fungsi _biz_iq(req_id, xmlns, tipe_iq, smax_id, anak) {
+    buat a = peta_baru();
+    a["id"] = req_id;
+    a["xmlns"] = xmlns;
+    a["type"] = tipe_iq;
+    a["to"] = _biz_jid("", BIZ_SERVER);
+    jika tipe(smax_id) == "teks" && panjang(smax_id) > 0 { a["smax_id"] = smax_id; }
+    hasil _biz_node("iq", a, anak, kosong);
+}
+
+fungsi _biz_anak(node, tag) {
+    jika tipe(node) != "peta" || tipe(node["children"]) != "larik" { hasil kosong; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        jika node["children"][i]["tag"] == tag { hasil node["children"][i]; }
+    }
+    hasil kosong;
+}
+
+fungsi _biz_anak_semua(node, tag) {
+    buat out = [];
+    jika tipe(node) != "peta" || tipe(node["children"]) != "larik" { hasil out; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        jika node["children"][i]["tag"] == tag { tambah(out, node["children"][i]); }
+    }
+    hasil out;
+}
+
+fungsi _biz_teks_anak(node, tag) {
+    buat c = _biz_anak(node, tag);
+    jika tipe(c) != "peta" || tipe(c["content"]) != "teks" { hasil ""; }
+    hasil c["content"];
+}
+
+fungsi _biz_trim(s) {
+    jika tipe(s) != "teks" { hasil ""; }
+    buat a = 0;
+    buat b = panjang(s);
+    selama (a < b) {
+        buat c = byte_di(s, a);
+        jika c != 32 && c != 9 && c != 10 && c != 13 { berhenti; }
+        a = a + 1;
+    }
+    selama (b > a) {
+        buat c = byte_di(s, b - 1);
+        jika c != 32 && c != 9 && c != 10 && c != 13 { berhenti; }
+        b = b - 1;
+    }
+    hasil potong(s, a, b);
+}
+
+fungsi _biz_teks(v) {
+    jika tipe(v) != "teks" { hasil ""; }
+    hasil v;
+}
+
+fungsi _biz_batas(v, maks) {
+    hasil panjang(_biz_teks(v)) <= maks;
+}
+
+fungsi _biz_validasi_id(kind, id) {
+    jika panjang(_biz_trim(id)) == 0 { lempar "ID " + kind + " kosong"; }
+    jika panjang(id) > 256 { lempar "ID " + kind + " lebih dari 256 byte"; }
+    hasil benar;
+}
+
+fungsi _biz_base64_url(s) {
+    buat b = base64_encode(s);
+    buat out = "";
+    untuk (buat i = 0; i < panjang(b); i = i + 1) {
+        buat c = potong(b, i, i + 1);
+        jika c == "+" { out = out + "-"; }
+        lain jika c == "/" { out = out + "_"; }
+        lain { out = out + c; }
+    }
+    hasil out;
+}
+
+fungsi _biz_host(u) {
+    jika tipe(u) != "teks" || panjang(u) < 9 { hasil ""; }
+    jika potong(u, 0, 8) != "https://" { hasil ""; }
+    buat i = 8;
+    selama (i < panjang(u)) {
+        buat c = byte_di(u, i);
+        jika c == 47 || c == 63 || c == 35 { berhenti; }
+        i = i + 1;
+    }
+    hasil huruf_kecil(potong(u, 8, i));
+}
+
+fungsi _biz_akhiran(s, suf) {
+    jika panjang(suf) > panjang(s) { hasil salah; }
+    hasil potong(s, panjang(s) - panjang(suf), panjang(s)) == suf;
+}
+
+fungsi _biz_validasi_url_media(u) {
+    jika panjang(_biz_teks(u)) > 4096 { lempar "URL lebih dari 4096 byte"; }
+    buat h = _biz_host(u);
+    jika panjang(h) == 0 { lempar "URL harus HTTPS absolut"; }
+    jika h == "whatsapp.net" || _biz_akhiran(h, ".whatsapp.net") { hasil benar; }
+    jika h == "fbcdn.net" || _biz_akhiran(h, ".fbcdn.net") { hasil benar; }
+    jika h == "facebook.com" || _biz_akhiran(h, ".facebook.com") { hasil benar; }
+    lempar "URL harus pakai host media WhatsApp atau Meta";
+}
+
+fungsi _biz_mata_uang_valid(kode) {
+    jika tipe(kode) != "teks" || panjang(kode) != 3 { hasil salah; }
+    untuk (buat i = 0; i < 3; i = i + 1) {
+        buat c = byte_di(kode, i);
+        jika c < 65 || c > 90 { hasil salah; }
+    }
+    hasil benar;
+}
+
+fungsi _biz_desimal_valid(v) {
+    jika tipe(v) != "teks" || panjang(v) == 0 || panjang(v) > 18 { hasil salah; }
+    untuk (buat i = 0; i < panjang(v); i = i + 1) {
+        buat c = byte_di(v, i);
+        jika c < 48 || c > 57 { hasil salah; }
+    }
+    hasil benar;
+}
+
+fungsi _biz_dimensi(lebar, tinggi) {
+    buat w = lebar;
+    buat h = tinggi;
+    jika tipe(w) != "angka" || w == 0 { w = 100; }
+    jika tipe(h) != "angka" || h == 0 { h = 100; }
+    jika w < 1 || w > 1024 || h < 1 || h > 1024 {
+        lempar "dimensi gambar katalog harus antara 1 dan 1024";
+    }
+    hasil [w, h];
+}
+
+fungsi _biz_jid_teks(j) {
+    jika tipe(j) == "teks" { hasil j; }
+    jika tipe(j) != "peta" { hasil ""; }
+    hasil JIDM.JidKeTeks(JIDM.JidToNonAd(j));
+}
+
+fungsi _biz_validasi_jid(j) {
+    buat t = _biz_jid_teks(j);
+    jika panjang(t) == 0 { lempar "JID bisnis kosong"; }
+    buat at = 0;
+    buat ada = salah;
+    untuk (buat i = 0; i < panjang(t); i = i + 1) {
+        jika byte_di(t, i) == 64 { at = i; ada = benar; }
+    }
+    jika !ada || at == 0 { lempar "JID bisnis kosong"; }
+    buat srv = potong(t, at + 1, panjang(t));
+    jika srv != BIZ_SERVER && srv != BIZ_SERVER_LID {
+        lempar "JID bisnis harus JID user atau LID";
+    }
+    hasil t;
+}
+
+fungsi _biz_duplikat(list, label) {
+    buat seen = peta_baru();
+    untuk (buat i = 0; i < panjang(list); i = i + 1) {
+        buat k = list[i];
+        jika seen[k] == benar { lempar "duplikat " + label + " " + ke_teks(k); }
+        seen[k] = benar;
+    }
+    hasil benar;
+}
+
+fungsi biz_sesi_katalog_baru() {
+    buat h = CP["acak_bytes_hex"](16);
+    buat varian = ["8", "9", "a", "b"];
+    buat vi = byte_di(CP["hex_decode"](CP["acak_bytes_hex"](1)), 0) % 4;
+    hasil potong(h, 0, 8) + "-" + potong(h, 8, 12) + "-4" + potong(h, 13, 16)
+        + "-" + varian[vi] + potong(h, 17, 20) + "-" + potong(h, 20, 32);
+}
+
+fungsi _biz_validasi_order(order_id, token) {
+    jika panjang(_biz_trim(order_id)) == 0 { lempar "ID order kosong"; }
+    jika panjang(order_id) > 256 { lempar "ID order lebih dari 256 byte"; }
+    jika panjang(_biz_trim(token)) == 0 { lempar "token order kosong"; }
+    jika panjang(token) > 8192 { lempar "token order lebih dari 8192 byte"; }
+    hasil benar;
+}
+
+fungsi biz_buat_node_detail_order(req_id, order_id, token_base64) {
+    _biz_validasi_order(order_id, token_base64);
+    buat dim = _biz_node("image_dimensions", peta_baru(), [
+        _biz_node("width", peta_baru(), [], "100"),
+        _biz_node("height", peta_baru(), [], "100")
+    ], kosong);
+    buat oa = peta_baru();
+    oa["op"] = "get";
+    oa["id"] = order_id;
+    buat order = _biz_node("order", oa, [dim, _biz_node("token", peta_baru(), [], token_base64)], kosong);
+    hasil _biz_iq(req_id, "fb:thrift_iq", "get", "5", [order]);
+}
+
+fungsi biz_urai_detail_order(resp_node) {
+    buat r = peta_baru();
+    r["ok"] = salah;
+    r["id"] = "";
+    r["dibuat"] = 0;
+    r["catalog_id"] = "";
+    r["harga"] = peta_baru();
+    r["produk"] = [];
+
+    buat order = _biz_anak(resp_node, "order");
+    jika tipe(order) != "peta" { hasil r; }
+    r["id"] = _biz_teks(order["attrs"]["id"]);
+    jika tipe(order["attrs"]["creation_ts"]) == "teks" { r["dibuat"] = ke_angka(order["attrs"]["creation_ts"]); }
+
+    buat harga_node = _biz_anak(order, "price");
+    jika tipe(harga_node) == "peta" {
+        buat h = peta_baru();
+        h["subtotal"] = ke_angka(_biz_teks_anak(harga_node, "subtotal"));
+        h["total"] = ke_angka(_biz_teks_anak(harga_node, "total"));
+        h["currency"] = _biz_teks_anak(harga_node, "currency");
+        h["price_status"] = _biz_teks_anak(harga_node, "price_status");
+        r["harga"] = h;
+    }
+    buat katalog = _biz_anak(order, "catalog");
+    jika tipe(katalog) == "peta" { r["catalog_id"] = _biz_teks_anak(katalog, "id"); }
+
+    buat plist = _biz_anak_semua(order, "product");
+    untuk (buat i = 0; i < panjang(plist); i = i + 1) {
+        buat pn = plist[i];
+        buat p = peta_baru();
+        p["id"] = _biz_teks_anak(pn, "id");
+        p["price"] = ke_angka(_biz_teks_anak(pn, "price"));
+        p["currency"] = _biz_teks_anak(pn, "currency");
+        p["name"] = _biz_teks_anak(pn, "name");
+        p["quantity"] = ke_angka(_biz_teks_anak(pn, "quantity"));
+        p["image_id"] = "";
+        p["image_url"] = "";
+        p["variant_properties"] = "";
+        buat img = _biz_anak(pn, "image");
+        jika tipe(img) == "peta" {
+            p["image_id"] = _biz_teks_anak(img, "id");
+            p["image_url"] = _biz_teks_anak(img, "url");
+        }
+        buat vr = _biz_anak(pn, "variant_info");
+        jika tipe(vr) == "peta" { p["variant_properties"] = _biz_teks_anak(vr, "properties"); }
+        tambah(r["produk"], p);
+    }
+    r["ok"] = benar;
+    hasil r;
+}
+
+fungsi biz_fitur_kelayakan() {
+    hasil ["meta_verified", "marketing_messages", "gen_ai", "gen_ai_image", "meta_one", "bb_pro"];
+}
+
+fungsi _biz_fitur_dikenal(f) {
+    buat semua = biz_fitur_kelayakan();
+    untuk (buat i = 0; i < panjang(semua); i = i + 1) {
+        jika semua[i] == f { hasil benar; }
+    }
+    hasil salah;
+}
+
+fungsi biz_buat_node_akun_tertaut(req_id) {
+    hasil _biz_iq(req_id, "fb:thrift_iq", "get", "42", [_biz_node("linked_accounts", peta_baru(), [], kosong)]);
+}
+
+fungsi biz_buat_node_kelayakan(req_id, fitur_list) {
+    buat fs = fitur_list;
+    jika tipe(fs) != "larik" || panjang(fs) == 0 { fs = biz_fitur_kelayakan(); }
+    buat attrs = peta_baru();
+    untuk (buat i = 0; i < panjang(fs); i = i + 1) {
+        jika !_biz_fitur_dikenal(fs[i]) { lempar "fitur bisnis tidak dikenal: " + ke_teks(fs[i]); }
+        jika attrs[fs[i]] == "true" { lempar "fitur bisnis dobel: " + ke_teks(fs[i]); }
+        attrs[fs[i]] = "true";
+    }
+    hasil _biz_iq(req_id, "w:biz", "get", "139", [_biz_node("features", attrs, [], kosong)]);
+}
+
+fungsi _biz_status_iklan(node) {
+    buat r = peta_baru();
+    r["has_active_ctwa_ad"] = salah;
+    r["has_created_ad"] = salah;
+    buat s = _biz_anak(node, "ad_status");
+    jika tipe(s) != "peta" { lempar "ad_status hilang di " + ke_teks(node["tag"]); }
+    r["has_active_ctwa_ad"] = (s["attrs"]["has_active_ctwa_ad"] == "true");
+    r["has_created_ad"] = (s["attrs"]["has_created_ad"] == "true");
+    hasil r;
+}
+
+fungsi _biz_teks_wajib(node, tag, maks) {
+    buat c = _biz_anak(node, tag);
+    jika tipe(c) != "peta" { lempar tag + " hilang di " + ke_teks(node["tag"]); }
+    jika tipe(c["content"]) != "teks" { lempar tag + " di " + ke_teks(node["tag"]) + " isinya bukan teks"; }
+    jika panjang(c["content"]) == 0 { lempar tag + " kosong"; }
+    jika panjang(c["content"]) > maks { lempar tag + " lebih dari " + ke_teks(maks) + " byte"; }
+    hasil c["content"];
+}
+
+fungsi _biz_bool_wajib(node, tag) {
+    buat v = _biz_teks_wajib(node, tag, 5);
+    jika v == "true" || v == "1" { hasil benar; }
+    jika v == "false" || v == "0" { hasil salah; }
+    lempar "nilai " + tag + " tidak valid: " + v;
+}
+
+fungsi _biz_enum_attr(node, attr, diizinkan) {
+    buat v = _biz_teks(node["attrs"][attr]);
+    untuk (buat i = 0; i < panjang(diizinkan); i = i + 1) {
+        jika v == diizinkan[i] { hasil v; }
+    }
+    lempar ke_teks(node["tag"]) + " " + attr + " tidak valid: " + v;
+}
+
+fungsi _biz_url_foto(node) {
+    buat p = _biz_anak(node, "profile_picture");
+    jika tipe(p) != "peta" { lempar "profile_picture hilang di " + ke_teks(node["tag"]); }
+    hasil _biz_teks_wajib(p, "url", 4096);
+}
+
+fungsi _biz_urai_fb_page(node) {
+    buat r = peta_baru();
+    r["id"] = _biz_teks(node["attrs"]["id"]);
+    jika panjang(r["id"]) == 0 || panjang(r["id"]) > 256 { lempar "ID Facebook Page tidak valid"; }
+    r["display_name"] = _biz_teks_wajib(node, "display_name", 512);
+    r["profile_picture_url"] = _biz_url_foto(node);
+    r["show_on_profile"] = _biz_bool_wajib(node, "show_on_profile");
+    r["profile_sync"] = "";
+    buat sync = _biz_anak(node, "profile_sync");
+    jika tipe(sync) == "peta" { r["profile_sync"] = _biz_enum_attr(sync, "state", ["disable", "import"]); }
+    buat iklan = _biz_status_iklan(node);
+    r["has_active_ctwa_ad"] = iklan["has_active_ctwa_ad"];
+    r["has_created_ad"] = iklan["has_created_ad"];
+    buat btn = _biz_anak(node, "whatsapp_as_page_button");
+    jika tipe(btn) != "peta" { lempar "whatsapp_as_page_button hilang di Facebook Page"; }
+    r["whatsapp_as_page_button"] = (_biz_enum_attr(btn, "state", ["off", "on"]) == "on");
+    hasil r;
+}
+
+fungsi _biz_urai_fb_biz(node) {
+    buat r = peta_baru();
+    r["id"] = _biz_teks(node["attrs"]["id"]);
+    jika panjang(r["id"]) == 0 || panjang(r["id"]) > 256 { lempar "ID bisnis Facebook tidak valid"; }
+    r["display_name"] = _biz_teks_wajib(node, "display_name", 512);
+    r["catalog_id"] = "";
+    r["catalog_state"] = "";
+    buat kat = _biz_anak(node, "catalog");
+    jika tipe(kat) == "peta" {
+        r["catalog_id"] = _biz_teks(kat["attrs"]["id"]);
+        jika panjang(r["catalog_id"]) == 0 || panjang(r["catalog_id"]) > 256 { lempar "ID katalog tidak valid"; }
+        r["catalog_state"] = _biz_enum_attr(kat, "state", ["disable", "import"]);
+    }
+    hasil r;
+}
+
+fungsi _biz_urai_ig(node) {
+    buat r = peta_baru();
+    r["handle"] = _biz_teks_wajib(node, "ig_handle", 512);
+    r["display_name"] = _biz_teks_wajib(node, "display_name", 512);
+    r["profile_picture_url"] = _biz_url_foto(node);
+    r["show_on_profile"] = _biz_bool_wajib(node, "show_on_profile");
+    hasil r;
+}
+
+fungsi _biz_urai_ad_identity(node) {
+    buat r = peta_baru();
+    r["id"] = _biz_teks(node["attrs"]["id"]);
+    jika panjang(r["id"]) == 0 || panjang(r["id"]) > 256 { lempar "ID WhatsApp ad identity tidak valid"; }
+    buat iklan = _biz_status_iklan(node);
+    r["has_active_ctwa_ad"] = iklan["has_active_ctwa_ad"];
+    r["has_created_ad"] = iklan["has_created_ad"];
+    hasil r;
+}
+
+fungsi biz_urai_akun_tertaut(resp_node) {
+    buat r = peta_baru();
+    r["ok"] = salah;
+    r["facebook_page"] = kosong;
+    r["facebook_business"] = kosong;
+    r["instagram"] = kosong;
+    r["whatsapp_ad_identity"] = kosong;
+
+    buat root = _biz_anak(resp_node, "linked_accounts");
+    jika tipe(root) != "peta" { hasil r; }
+    untuk (buat i = 0; i < panjang(root["children"]); i = i + 1) {
+        buat n = root["children"][i];
+        jika n["tag"] == "fb_page" { r["facebook_page"] = _biz_urai_fb_page(n); }
+        lain jika n["tag"] == "fb_biz" { r["facebook_business"] = _biz_urai_fb_biz(n); }
+        lain jika n["tag"] == "ig_professional" { r["instagram"] = _biz_urai_ig(n); }
+        lain jika n["tag"] == "whatsapp_ad_identity" { r["whatsapp_ad_identity"] = _biz_urai_ad_identity(n); }
+    }
+    r["ok"] = benar;
+    hasil r;
+}
+
+fungsi _biz_status_kelayakan_valid(fitur, status) {
+    buat diizinkan = ["FAIL", "SUCCESS"];
+    jika fitur == "marketing_messages" { diizinkan = ["FAIL", "PAUSED", "SUCCESS", "WARNING"]; }
+    jika fitur == "bb_pro" { diizinkan = ["ELIGIBLE_TO_ONBOARD", "NOT_ELIGIBLE", "ONBOARDED"]; }
+    untuk (buat i = 0; i < panjang(diizinkan); i = i + 1) {
+        jika status == diizinkan[i] { hasil benar; }
+    }
+    lempar "status kelayakan " + fitur + " tidak valid: " + ke_teks(status);
+}
+
+fungsi biz_urai_kelayakan(resp_node) {
+    buat r = peta_baru();
+    r["ok"] = salah;
+    r["fitur"] = [];
+    jika tipe(resp_node) != "peta" || tipe(resp_node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(resp_node["children"]); i = i + 1) {
+        buat n = resp_node["children"][i];
+        jika !_biz_fitur_dikenal(n["tag"]) { lanjut; }
+        buat e = peta_baru();
+        e["fitur"] = n["tag"];
+        e["status"] = _biz_teks(n["attrs"]["status"]);
+        e["expiration"] = 0;
+        jika tipe(n["attrs"]["expiration"]) == "teks" { e["expiration"] = ke_angka(n["attrs"]["expiration"]); }
+        e["additional_params"] = _biz_teks(n["attrs"]["additional_params"]);
+        e["show_privacy_interstitial"] = kosong;
+        jika tipe(n["attrs"]["should_show_privacy_interstitial_to_new_users"]) == "teks" {
+            e["show_privacy_interstitial"] = (n["attrs"]["should_show_privacy_interstitial_to_new_users"] == "true");
+        }
+        e["v1_enabled"] = kosong;
+        jika tipe(n["attrs"]["v1_enabled"]) == "teks" { e["v1_enabled"] = (n["attrs"]["v1_enabled"] == "true"); }
+        _biz_status_kelayakan_valid(e["fitur"], e["status"]);
+        jika panjang(e["additional_params"]) > 16384 {
+            lempar e["fitur"] + " additional_params lebih dari 16384 byte";
+        }
+        tambah(r["fitur"], e);
+    }
+    r["ok"] = benar;
+    hasil r;
+}
+
+fungsi biz_buat_node_mex(req_id, query_id, variables_json) {
+    buat qa = peta_baru(); qa["query_id"] = query_id;
+    buat payload = "{\"variables\":" + variables_json + "}";
+    hasil _biz_iq(req_id, "w:mex", "get", kosong, [_biz_node("query", qa, [], payload)]);
+}
+
+fungsi biz_urai_respons_mex(node) {
+    buat r = peta_baru();
+    r["ok"] = salah;
+    r["data"] = "";
+    jika tipe(node) != "peta" || tipe(node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        jika node["children"][i]["tag"] == "result" {
+            r["ok"] = benar;
+            r["data"] = node["children"][i]["content"];
+            hasil r;
+        }
+    }
+    hasil r;
+}
+
+fungsi biz_vars_katalog(bisnis_jid, params) {
+    buat JidTeks = _biz_validasi_jid(bisnis_jid);
+    buat p = params;
+    jika tipe(p) != "peta" { p = peta_baru(); }
+    buat after = _biz_teks(p["after"]);
+    jika panjang(after) > 2048 { lempar "kursor katalog lebih dari 2048 byte"; }
+    buat limit = p["limit"];
+    jika tipe(limit) != "angka" || limit == 0 { limit = 50; }
+    jika limit < 1 || limit > 100 { lempar "limit katalog harus antara 1 dan 100"; }
+    buat d = _biz_dimensi(p["width"], p["height"]);
+
+    buat req = peta_baru();
+    req["jid"] = JidTeks;
+    req["limit"] = ke_teks(limit);
+    req["width"] = ke_teks(d[0]);
+    req["height"] = ke_teks(d[1]);
+    req["variant_thumbnail_width"] = ke_teks(d[0]);
+    req["variant_thumbnail_height"] = ke_teks(d[1]);
+    req["variant_info_fields"] = peta_baru();
+    req["allow_shop_source"] = "ALLOWSHOPSOURCE_FALSE";
+    jika panjang(after) > 0 { req["after"] = after; }
+
+    buat inner = peta_baru(); inner["product_catalog"] = req;
+    buat outer = peta_baru(); outer["request"] = inner;
+    hasil json_encode(outer);
+}
+
+fungsi biz_vars_produk_katalog(bisnis_jid, product_id, lebar, tinggi) {
+    buat JidTeks = _biz_validasi_jid(bisnis_jid);
+    _biz_validasi_id("produk", product_id);
+    buat d = _biz_dimensi(lebar, tinggi);
+    buat req = peta_baru();
+    req["jid"] = JidTeks;
+    req["product_id"] = product_id;
+    req["width"] = ke_teks(d[0]);
+    req["height"] = ke_teks(d[1]);
+    req["variant_thumbnail_width"] = ke_teks(d[0]);
+    req["variant_thumbnail_height"] = ke_teks(d[1]);
+    req["variant_info_fields"] = peta_baru();
+    req["fetch_compliance_info"] = "true";
+    buat inner = peta_baru(); inner["product"] = req;
+    buat outer = peta_baru(); outer["request"] = inner;
+    hasil json_encode(outer);
+}
+
+fungsi biz_vars_koleksi(bisnis_jid, params) {
+    buat JidTeks = _biz_validasi_jid(bisnis_jid);
+    buat p = params;
+    jika tipe(p) != "peta" { p = peta_baru(); }
+    buat after = _biz_teks(p["after"]);
+    jika panjang(after) > 2048 { lempar "kursor koleksi lebih dari 2048 byte"; }
+    buat cl = p["collection_limit"];
+    jika tipe(cl) != "angka" || cl == 0 { cl = 20; }
+    jika cl < 1 || cl > 20 { lempar "limit koleksi harus antara 1 dan 20"; }
+    buat il = p["item_limit"];
+    jika tipe(il) != "angka" || il == 0 { il = 50; }
+    jika il < 1 || il > 100 { lempar "limit item koleksi harus antara 1 dan 100"; }
+    buat d = _biz_dimensi(p["width"], p["height"]);
+
+    buat req = peta_baru();
+    req["biz_jid"] = JidTeks;
+    req["collection_limit"] = ke_teks(cl);
+    req["item_limit"] = ke_teks(il);
+    req["width"] = ke_teks(d[0]);
+    req["height"] = ke_teks(d[1]);
+    req["variant_thumbnail_width"] = ke_teks(d[0]);
+    req["variant_thumbnail_height"] = ke_teks(d[1]);
+    req["variant_info_fields"] = peta_baru();
+    jika panjang(after) > 0 { req["after"] = after; }
+
+    buat inner = peta_baru(); inner["collections"] = req;
+    buat outer = peta_baru(); outer["request"] = inner;
+    hasil json_encode(outer);
+}
+
+fungsi biz_vars_koleksi_tunggal(bisnis_jid, collection_id, params) {
+    buat JidTeks = _biz_validasi_jid(bisnis_jid);
+    _biz_validasi_id("koleksi", collection_id);
+    buat p = params;
+    jika tipe(p) != "peta" { p = peta_baru(); }
+    buat after = _biz_teks(p["after"]);
+    jika panjang(after) > 2048 { lempar "kursor koleksi lebih dari 2048 byte"; }
+    buat limit = p["limit"];
+    jika tipe(limit) != "angka" || limit == 0 { limit = 50; }
+    jika limit < 1 || limit > 100 { lempar "limit item koleksi harus antara 1 dan 100"; }
+    buat d = _biz_dimensi(p["width"], p["height"]);
+
+    buat req = peta_baru();
+    req["biz_jid"] = JidTeks;
+    req["id"] = collection_id;
+    req["limit"] = ke_teks(limit);
+    req["width"] = ke_teks(d[0]);
+    req["height"] = ke_teks(d[1]);
+    req["variant_thumbnail_width"] = ke_teks(d[0]);
+    req["variant_thumbnail_height"] = ke_teks(d[1]);
+    req["variant_info_fields"] = peta_baru();
+    jika panjang(after) > 0 { req["after"] = after; }
+
+    buat inner = peta_baru(); inner["collection"] = req;
+    buat outer = peta_baru(); outer["request"] = inner;
+    hasil json_encode(outer);
+}
+
+fungsi biz_vars_daftar_produk(bisnis_jid, product_ids, lebar, tinggi) {
+    buat JidTeks = _biz_validasi_jid(bisnis_jid);
+    jika tipe(product_ids) != "larik" || panjang(product_ids) < 1 || panjang(product_ids) > 100 {
+        lempar "daftar produk harus berisi 1 sampai 100 ID";
+    }
+    buat produk = [];
+    untuk (buat i = 0; i < panjang(product_ids); i = i + 1) {
+        _biz_validasi_id("produk", product_ids[i]);
+        buat e = peta_baru(); e["id"] = product_ids[i];
+        tambah(produk, e);
+    }
+    _biz_duplikat(product_ids, "ID produk");
+    buat d = _biz_dimensi(lebar, tinggi);
+
+    buat req = peta_baru();
+    req["jid"] = JidTeks;
+    req["products"] = produk;
+    req["width"] = ke_teks(d[0]);
+    req["height"] = ke_teks(d[1]);
+    buat inner = peta_baru(); inner["product_list"] = req;
+    buat outer = peta_baru(); outer["request"] = inner;
+    hasil json_encode(outer);
+}
+
+fungsi biz_buat_node_katalog(req_id, bisnis_jid, params) {
+    hasil biz_buat_node_mex(req_id, BIZ_Q_KATALOG, biz_vars_katalog(bisnis_jid, params));
+}
+
+fungsi biz_buat_node_produk_katalog(req_id, bisnis_jid, product_id) {
+    hasil biz_buat_node_mex(req_id, BIZ_Q_PRODUK_KATALOG, biz_vars_produk_katalog(bisnis_jid, product_id, 100, 100));
+}
+
+fungsi biz_buat_node_koleksi(req_id, bisnis_jid, params) {
+    hasil biz_buat_node_mex(req_id, BIZ_Q_KOLEKSI, biz_vars_koleksi(bisnis_jid, params));
+}
+
+fungsi biz_buat_node_koleksi_tunggal(req_id, bisnis_jid, collection_id, params) {
+    hasil biz_buat_node_mex(req_id, BIZ_Q_KOLEKSI_TUNGGAL, biz_vars_koleksi_tunggal(bisnis_jid, collection_id, params));
+}
+
+fungsi biz_buat_node_daftar_produk(req_id, bisnis_jid, product_ids) {
+    hasil biz_buat_node_mex(req_id, BIZ_Q_DAFTAR_PRODUK, biz_vars_daftar_produk(bisnis_jid, product_ids, 100, 100));
+}
+
+fungsi _biz_json(data) {
+    buat v = data;
+    jika tipe(v) == "teks" { v = json_decode(v); }
+    jika tipe(v) != "peta" { lempar "respons bukan objek JSON"; }
+    hasil v;
+}
+
+fungsi biz_dekode_halaman_katalog(data) {
+    buat v = _biz_json(data);
+    buat root = v["xwa_product_catalog_get_product_catalog"];
+    jika tipe(root) != "peta" || tipe(root["product_catalog"]) != "peta" {
+        lempar "respons katalog kehilangan xwa_product_catalog_get_product_catalog.product_catalog";
+    }
+    buat pc = root["product_catalog"];
+    buat r = peta_baru();
+    r["produk"] = [];
+    jika tipe(pc["products"]) == "larik" { r["produk"] = pc["products"]; }
+    r["next"] = "";
+    r["previous"] = "";
+    jika tipe(pc["paging"]) == "peta" {
+        r["next"] = _biz_teks(pc["paging"]["after"]);
+        r["previous"] = _biz_teks(pc["paging"]["before"]);
+    }
+    hasil r;
+}
+
+fungsi biz_dekode_produk_katalog(data) {
+    buat v = _biz_json(data);
+    buat root = v["xwa_product_catalog_get_product"];
+    jika tipe(root) != "peta" || tipe(root["product_catalog"]) != "peta" || tipe(root["product_catalog"]["product"]) != "peta" {
+        lempar "respons produk katalog kehilangan xwa_product_catalog_get_product.product_catalog.product";
+    }
+    hasil root["product_catalog"]["product"];
+}
+
+fungsi biz_dekode_koleksi(data) {
+    buat v = _biz_json(data);
+    buat root = v["xwa_product_catalog_get_collections"];
+    jika tipe(root) != "peta" { lempar "respons koleksi kehilangan xwa_product_catalog_get_collections"; }
+    buat r = peta_baru();
+    r["koleksi"] = [];
+    jika tipe(root["collections"]) == "larik" { r["koleksi"] = root["collections"]; }
+    r["next"] = "";
+    jika tipe(root["paging"]) == "peta" { r["next"] = _biz_teks(root["paging"]["after"]); }
+    hasil r;
+}
+
+fungsi biz_dekode_koleksi_tunggal(data) {
+    buat v = _biz_json(data);
+    buat root = v["xwa_product_catalog_get_single_collection"];
+    jika tipe(root) != "peta" || tipe(root["collection"]) != "peta" {
+        lempar "respons koleksi kehilangan xwa_product_catalog_get_single_collection.collection";
+    }
+    buat c = root["collection"];
+    jika tipe(c["products"]) != "larik" { c["products"] = []; }
+    c["next"] = "";
+    c["previous"] = "";
+    jika tipe(root["paging"]) == "peta" {
+        c["next"] = _biz_teks(root["paging"]["after"]);
+        c["previous"] = _biz_teks(root["paging"]["before"]);
+    }
+    hasil c;
+}
+
+fungsi biz_dekode_daftar_produk(data, diminta) {
+    buat v = _biz_json(data);
+    buat root = v["xwa_product_catalog_get_product_list"];
+    jika tipe(root) != "peta" || tipe(root["product_list"]) != "peta" {
+        lempar "respons daftar produk kehilangan xwa_product_catalog_get_product_list.product_list";
+    }
+    buat produk = root["product_list"]["products"];
+    jika tipe(produk) != "larik" { produk = []; }
+    buat by_id = peta_baru();
+    untuk (buat i = 0; i < panjang(produk); i = i + 1) {
+        buat id = _biz_teks(produk[i]["id"]);
+        jika panjang(id) == 0 { lempar "respons daftar produk punya ID produk kosong"; }
+        jika tipe(by_id[id]) == "peta" { lempar "respons daftar produk punya ID produk dobel " + id; }
+        by_id[id] = produk[i];
+    }
+    buat out = [];
+    untuk (buat i = 0; i < panjang(diminta); i = i + 1) {
+        buat id = diminta[i];
+        jika tipe(by_id[id]) != "peta" { lempar "respons daftar produk kehilangan produk " + ke_teks(id); }
+        tambah(out, by_id[id]);
+    }
+    hasil out;
+}
+
+fungsi _biz_validasi_nama_koleksi(nama) {
+    buat n = _biz_trim(nama);
+    jika panjang(n) == 0 { lempar "nama koleksi bisnis kosong"; }
+    jika panjang(n) > 256 { lempar "nama koleksi bisnis lebih dari 256 byte"; }
+    hasil n;
+}
+
+fungsi _biz_validasi_id_produk_koleksi(product_ids, boleh_kosong) {
+    buat ids = product_ids;
+    jika tipe(ids) != "larik" { ids = []; }
+    jika (!boleh_kosong && panjang(ids) == 0) || panjang(ids) > BIZ_MAKS_ITEM_KOLEKSI {
+        lempar "daftar produk koleksi bisnis harus berisi 1 sampai " + ke_teks(BIZ_MAKS_ITEM_KOLEKSI) + " ID";
+    }
+    untuk (buat i = 0; i < panjang(ids); i = i + 1) { _biz_validasi_id("produk", ids[i]); }
+    _biz_duplikat(ids, "ID produk");
+    hasil ids;
+}
+
+fungsi biz_vars_buat_koleksi(bisnis_jid, nama, product_ids, catalog_session_id) {
+    buat JidTeks = _biz_validasi_jid(bisnis_jid);
+    buat n = _biz_validasi_nama_koleksi(nama);
+    buat ids = _biz_validasi_id_produk_koleksi(product_ids, salah);
+    _biz_validasi_id("sesi katalog", catalog_session_id);
+    buat c = peta_baru();
+    c["name"] = n;
+    c["product_ids"] = ids;
+    c["biz_jid"] = JidTeks;
+    c["catalog_session_id"] = catalog_session_id;
+    buat inner = peta_baru(); inner["collection"] = c;
+    buat outer = peta_baru(); outer["input"] = inner;
+    hasil json_encode(outer);
+}
+
+fungsi biz_vars_ubah_koleksi(bisnis_jid, collection_id, update, catalog_session_id) {
+    buat JidTeks = _biz_validasi_jid(bisnis_jid);
+    _biz_validasi_id("koleksi", collection_id);
+    _biz_validasi_id("sesi katalog", catalog_session_id);
+    buat u = update;
+    jika tipe(u) != "peta" { u = peta_baru(); }
+    buat tambah_ids = _biz_validasi_id_produk_koleksi(u["add_product_ids"], benar);
+    buat hapus_ids = _biz_validasi_id_produk_koleksi(u["remove_product_ids"], benar);
+    buat ada_nama = (tipe(u["name"]) == "teks");
+    jika !ada_nama && panjang(tambah_ids) == 0 && panjang(hapus_ids) == 0 {
+        lempar "update koleksi bisnis kosong";
+    }
+    buat dihapus = peta_baru();
+    untuk (buat i = 0; i < panjang(hapus_ids); i = i + 1) { dihapus[hapus_ids[i]] = benar; }
+    untuk (buat i = 0; i < panjang(tambah_ids); i = i + 1) {
+        jika dihapus[tambah_ids[i]] == benar {
+            lempar "ID produk " + ke_teks(tambah_ids[i]) + " gak bisa ditambah dan dihapus bareng";
+        }
+    }
+    buat c = peta_baru();
+    c["id"] = collection_id;
+    c["biz_jid"] = JidTeks;
+    c["catalog_session_id"] = catalog_session_id;
+    jika ada_nama { c["name"] = _biz_validasi_nama_koleksi(u["name"]); }
+    jika panjang(tambah_ids) > 0 {
+        buat a = peta_baru(); a["ids"] = tambah_ids;
+        c["add"] = a;
+    }
+    jika panjang(hapus_ids) > 0 {
+        buat h = peta_baru(); h["ids"] = hapus_ids;
+        c["remove"] = h;
+    }
+    buat inner = peta_baru(); inner["collection"] = c;
+    buat outer = peta_baru(); outer["input"] = inner;
+    hasil json_encode(outer);
+}
+
+fungsi biz_vars_hapus_koleksi(bisnis_jid, collection_ids, catalog_session_id) {
+    buat JidTeks = _biz_validasi_jid(bisnis_jid);
+    jika tipe(collection_ids) != "larik" || panjang(collection_ids) < 1 || panjang(collection_ids) > BIZ_MAKS_ITEM_KOLEKSI {
+        lempar "hapus koleksi bisnis harus berisi 1 sampai " + ke_teks(BIZ_MAKS_ITEM_KOLEKSI) + " ID";
+    }
+    _biz_validasi_id("sesi katalog", catalog_session_id);
+    untuk (buat i = 0; i < panjang(collection_ids); i = i + 1) { _biz_validasi_id("koleksi", collection_ids[i]); }
+    _biz_duplikat(collection_ids, "ID koleksi");
+    buat c = peta_baru();
+    c["collection_ids"] = collection_ids;
+    c["biz_jid"] = JidTeks;
+    c["catalog_session_id"] = catalog_session_id;
+    buat inner = peta_baru(); inner["collections"] = c;
+    buat outer = peta_baru(); outer["input"] = inner;
+    hasil json_encode(outer);
+}
+
+fungsi biz_vars_urut_koleksi(bisnis_jid, moves) {
+    buat JidTeks = _biz_validasi_jid(bisnis_jid);
+    jika tipe(moves) != "larik" || panjang(moves) < 1 || panjang(moves) > BIZ_MAKS_PINDAH_KOLEKSI {
+        lempar "urut koleksi bisnis harus berisi 1 sampai " + ke_teks(BIZ_MAKS_PINDAH_KOLEKSI) + " pindahan";
+    }
+    buat items = [];
+    buat ids = [];
+    untuk (buat i = 0; i < panjang(moves); i = i + 1) {
+        buat m = moves[i];
+        _biz_validasi_id("koleksi", m["collection_id"]);
+        buat dari = m["from_index"];
+        buat ke = m["to_index"];
+        jika tipe(dari) != "angka" || tipe(ke) != "angka" || dari < 0 || ke < 0
+            || dari >= BIZ_MAKS_PINDAH_KOLEKSI || ke >= BIZ_MAKS_PINDAH_KOLEKSI {
+            lempar "index pindah koleksi bisnis harus antara 0 dan " + ke_teks(BIZ_MAKS_PINDAH_KOLEKSI - 1);
+        }
+        tambah(ids, m["collection_id"]);
+        buat e = peta_baru();
+        e["collection_id"] = m["collection_id"];
+        e["from_index"] = dari;
+        e["to_index"] = ke;
+        tambah(items, e);
+    }
+    _biz_duplikat(ids, "pindahan koleksi");
+    buat inner = peta_baru();
+    inner["biz_jid"] = JidTeks;
+    inner["move"] = items;
+    buat outer = peta_baru(); outer["input"] = inner;
+    hasil json_encode(outer);
+}
+
+fungsi biz_dekode_mutasi_koleksi(data, diskriminator) {
+    buat v = _biz_json(data);
+    buat root = v[diskriminator];
+    jika tipe(root) != "peta" { lempar "respons mutasi koleksi bisnis kehilangan " + diskriminator; }
+    buat c = root["collection"];
+    jika tipe(c) != "peta" || panjang(_biz_teks(c["id"])) == 0 || tipe(c["status_info"]) != "peta"
+        || panjang(_biz_teks(c["status_info"]["status"])) == 0 {
+        lempar "respons " + diskriminator + " kehilangan status koleksi";
+    }
+    buat r = peta_baru();
+    r["id"] = c["id"];
+    r["review_status"] = c["status_info"]["status"];
+    hasil r;
+}
+
+fungsi biz_dekode_sukses_katalog(data, diskriminator) {
+    buat v = _biz_json(data);
+    buat root = v[diskriminator];
+    jika tipe(root) != "peta" { lempar "respons katalog bisnis kehilangan " + diskriminator; }
+    jika diskriminator == "xfb_whatsapp_catalog_create" {
+        jika tipe(root["product_catalog"]) != "peta" {
+            lempar "respons " + diskriminator + " kehilangan product_catalog";
+        }
+        hasil benar;
+    }
+    jika root["success"] != benar { lempar "respons " + diskriminator + " gak konfirmasi sukses"; }
+    hasil benar;
+}
+
+fungsi biz_vars_buat_katalog(bisnis_jid) {
+    buat JidTeks = _biz_validasi_jid(bisnis_jid);
+    buat pc = peta_baru(); pc["biz_jid"] = JidTeks;
+    buat inner = peta_baru();
+    inner["product_catalog"] = pc;
+    inner["platform"] = "WEB";
+    buat outer = peta_baru(); outer["input"] = inner;
+    hasil json_encode(outer);
+}
+
+fungsi biz_vars_keranjang(bisnis_jid, aktif) {
+    buat JidTeks = _biz_validasi_jid(bisnis_jid);
+    buat inner = peta_baru();
+    inner["biz_jid"] = JidTeks;
+    inner["cart_enabled"] = (aktif == benar);
+    buat outer = peta_baru(); outer["input"] = inner;
+    hasil json_encode(outer);
+}
+
+fungsi biz_vars_visibilitas_produk(bisnis_jid, product_id, disembunyikan) {
+    buat JidTeks = _biz_validasi_jid(bisnis_jid);
+    _biz_validasi_id("produk", product_id);
+    buat p = peta_baru();
+    p["product_id"] = product_id;
+    p["is_hidden"] = (disembunyikan == benar);
+    buat inner = peta_baru();
+    inner["jid"] = JidTeks;
+    inner["products"] = [p];
+    buat outer = peta_baru(); outer["input"] = inner;
+    hasil json_encode(outer);
+}
+
+fungsi _biz_validasi_alasan_banding(alasan) {
+    buat a = _biz_trim(alasan);
+    jika panjang(a) == 0 { lempar "alasan banding katalog bisnis kosong"; }
+    jika panjang(a) > BIZ_MAKS_ALASAN_BANDING {
+        lempar "alasan banding katalog bisnis lebih dari " + ke_teks(BIZ_MAKS_ALASAN_BANDING) + " byte";
+    }
+    hasil a;
+}
+
+fungsi biz_vars_banding_produk(bisnis_jid, product_id, alasan) {
+    buat JidTeks = _biz_validasi_jid(bisnis_jid);
+    _biz_validasi_id("produk", product_id);
+    buat a = _biz_validasi_alasan_banding(alasan);
+    buat inner = peta_baru();
+    inner["jid"] = JidTeks;
+    inner["product_id"] = product_id;
+    inner["reason"] = a;
+    buat outer = peta_baru(); outer["input"] = inner;
+    hasil json_encode(outer);
+}
+
+fungsi biz_vars_banding_koleksi(bisnis_jid, collection_id, alasan) {
+    buat JidTeks = _biz_validasi_jid(bisnis_jid);
+    _biz_validasi_id("koleksi", collection_id);
+    buat a = _biz_validasi_alasan_banding(alasan);
+    buat inner = peta_baru();
+    inner["product_set_id"] = collection_id;
+    inner["jid"] = JidTeks;
+    inner["reason"] = a;
+    buat outer = peta_baru(); outer["input"] = inner;
+    hasil json_encode(outer);
+}
+
+fungsi biz_dekode_keranjang(data, diharapkan) {
+    buat v = _biz_json(data);
+    buat root = v["xfb_whatsapp_smb_commerce_settings"];
+    jika tipe(root) != "peta" || tipe(root["cart_enabled"]) != "boolean" {
+        lempar "respons pengaturan commerce bisnis kehilangan cart_enabled";
+    }
+    jika root["cart_enabled"] != (diharapkan == benar) {
+        lempar "respons pengaturan commerce bisnis balikin cart_enabled=" + ke_teks(root["cart_enabled"]);
+    }
+    hasil benar;
+}
+
+fungsi biz_tipe_entitas_merchant() {
+    hasil ["SOLE_PROPRIETORSHIP", "PARTNERSHIP", "PRIVATE_COMPANY", "PUBLIC_COMPANY",
+           "LIMITED_LIABILITY_PARTNERSHIP", "OTHER"];
+}
+
+fungsi _biz_validasi_field_merchant(nama, nilai, batas) {
+    jika panjang(_biz_teks(nilai)) > batas {
+        lempar "merchant bisnis " + nama + " lebih dari " + ke_teks(batas) + " byte";
+    }
+    hasil benar;
+}
+
+fungsi _biz_normalisasi_merchant(info) {
+    jika tipe(info) != "peta" { lempar "info kepatuhan merchant bisnis kosong"; }
+    buat cc = info["customer_care_details"];
+    jika tipe(cc) != "peta" { cc = peta_baru(); }
+    buat go_ = info["grievance_officer_details"];
+    jika tipe(go_) != "peta" { go_ = peta_baru(); }
+
+    buat r = peta_baru();
+    r["entity_name"] = _biz_trim(info["entity_name"]);
+    r["entity_type"] = _biz_teks(info["entity_type"]);
+    r["is_registered"] = (info["is_registered"] == benar);
+    r["entity_type_custom"] = _biz_trim(info["entity_type_custom"]);
+
+    buat cc2 = peta_baru();
+    cc2["email"] = _biz_trim(cc["email"]);
+    cc2["landline_number"] = _biz_trim(cc["landline_number"]);
+    cc2["mobile_number"] = _biz_trim(cc["mobile_number"]);
+    r["customer_care_details"] = cc2;
+
+    buat go2 = peta_baru();
+    go2["name"] = _biz_trim(go_["name"]);
+    go2["email"] = _biz_trim(go_["email"]);
+    go2["landline_number"] = _biz_trim(go_["landline_number"]);
+    go2["mobile_number"] = _biz_trim(go_["mobile_number"]);
+    r["grievance_officer_details"] = go2;
+
+    jika panjang(r["entity_name"]) == 0 { lempar "nama entitas merchant bisnis kosong"; }
+    jika panjang(r["entity_type"]) == 0 { lempar "tipe entitas merchant bisnis kosong"; }
+    buat tipe_ok = salah;
+    buat semua = biz_tipe_entitas_merchant();
+    untuk (buat i = 0; i < panjang(semua); i = i + 1) {
+        jika semua[i] == r["entity_type"] { tipe_ok = benar; }
+    }
+    jika !tipe_ok { lempar "tipe entitas merchant bisnis gak didukung: " + r["entity_type"]; }
+    jika r["entity_type"] == "OTHER" && panjang(r["entity_type_custom"]) == 0 {
+        lempar "tipe entitas custom merchant bisnis kosong";
+    }
+    _biz_validasi_field_merchant("entity name", r["entity_name"], 256);
+    _biz_validasi_field_merchant("custom entity type", r["entity_type_custom"], 256);
+    _biz_validasi_field_merchant("customer care email", cc2["email"], 254);
+    _biz_validasi_field_merchant("customer care landline", cc2["landline_number"], 64);
+    _biz_validasi_field_merchant("customer care mobile", cc2["mobile_number"], 64);
+    _biz_validasi_field_merchant("grievance officer name", go2["name"], 256);
+    _biz_validasi_field_merchant("grievance officer email", go2["email"], 254);
+    _biz_validasi_field_merchant("grievance officer landline", go2["landline_number"], 64);
+    _biz_validasi_field_merchant("grievance officer mobile", go2["mobile_number"], 64);
+    hasil r;
+}
+
+fungsi biz_vars_kepatuhan_query(bisnis_jid) {
+    buat JidTeks = _biz_validasi_jid(bisnis_jid);
+    buat inner = peta_baru(); inner["biz_jid"] = JidTeks;
+    buat outer = peta_baru(); outer["request"] = inner;
+    hasil json_encode(outer);
+}
+
+fungsi biz_vars_kepatuhan_set(bisnis_jid, info) {
+    buat JidTeks = _biz_validasi_jid(bisnis_jid);
+    buat n = _biz_normalisasi_merchant(info);
+    buat inner = peta_baru();
+    inner["biz_jid"] = JidTeks;
+    inner["merchant_info"] = n;
+    buat outer = peta_baru(); outer["input"] = inner;
+    hasil json_encode(outer);
+}
+
+fungsi biz_dekode_kepatuhan(data, field) {
+    buat v = _biz_json(data);
+    buat root = v[field];
+    jika tipe(root) != "peta" || tipe(root["merchant_info"]) != "peta" {
+        lempar "respons kepatuhan merchant bisnis kehilangan merchant_info";
+    }
+    hasil root["merchant_info"];
+}
+
+fungsi _biz_validasi_input_produk(input) {
+    jika tipe(input) != "peta" { lempar "input produk bisnis kosong"; }
+    buat nama = _biz_trim(input["name"]);
+    jika panjang(nama) == 0 { lempar "nama produk bisnis kosong"; }
+    jika panjang(nama) > 256 { lempar "nama produk bisnis lebih dari 256 byte"; }
+    jika panjang(_biz_teks(input["description"])) > 4096 { lempar "deskripsi produk bisnis lebih dari 4096 byte"; }
+    jika panjang(_biz_teks(input["retailer_id"])) > 256 { lempar "retailer ID produk bisnis lebih dari 256 byte"; }
+
+    buat imgs = input["image_urls"];
+    jika tipe(imgs) != "larik" || panjang(imgs) < 1 || panjang(imgs) > 10 {
+        lempar "produk bisnis harus punya 1 sampai 10 gambar";
+    }
+    untuk (buat i = 0; i < panjang(imgs); i = i + 1) { _biz_validasi_url_media(imgs[i]); }
+
+    buat vids = input["video_urls"];
+    jika tipe(vids) == "larik" {
+        jika panjang(vids) > 10 { lempar "produk bisnis gak boleh lebih dari 10 video"; }
+        untuk (buat i = 0; i < panjang(vids); i = i + 1) { _biz_validasi_url_media(vids[i]); }
+    }
+
+    buat u = _biz_teks(input["url"]);
+    jika panjang(u) > 0 {
+        jika panjang(_biz_host(u)) == 0 || panjang(u) > 2048 {
+            lempar "URL produk bisnis harus HTTPS absolut maksimal 2048 byte";
+        }
+    }
+
+    buat harga = _biz_teks(input["price"]);
+    buat mata_uang = _biz_teks(input["currency"]);
+    buat harga_diskon = _biz_teks(input["sale_price"]);
+    jika panjang(harga) == 0 {
+        jika panjang(mata_uang) > 0 || panjang(harga_diskon) > 0 {
+            lempar "mata uang dan harga diskon produk bisnis butuh harga";
+        }
+    } lain {
+        jika !_biz_mata_uang_valid(mata_uang) { lempar "mata uang produk bisnis harus 3 huruf kapital"; }
+        jika !_biz_desimal_valid(harga) { lempar "harga produk bisnis harus bilangan bulat dalam perseribu"; }
+        jika panjang(harga_diskon) > 0 && !_biz_desimal_valid(harga_diskon) {
+            lempar "harga diskon produk bisnis harus bilangan bulat dalam perseribu";
+        }
+    }
+    jika panjang(_biz_teks(input["compliance_category"])) > 128 {
+        lempar "compliance category produk bisnis lebih dari 128 byte";
+    }
+    buat comp = input["compliance_info"];
+    jika tipe(comp) == "peta" {
+        jika panjang(_biz_teks(comp["country_code_origin"])) > 3 || panjang(_biz_teks(comp["importer_name"])) > 256 {
+            lempar "informasi kepatuhan produk bisnis gak valid";
+        }
+        buat addr = comp["importer_address"];
+        jika tipe(addr) == "peta" {
+            jika panjang(_biz_teks(addr["street1"])) > 512 || panjang(_biz_teks(addr["street2"])) > 512
+                || panjang(_biz_teks(addr["city"])) > 256 || panjang(_biz_teks(addr["region"])) > 256
+                || panjang(_biz_teks(addr["postal_code"])) > 64 || panjang(_biz_teks(addr["country_code"])) > 3 {
+                lempar "alamat importir produk bisnis gak valid";
+            }
+        }
+    }
+    hasil benar;
+}
+
+fungsi _biz_info_produk(input) {
+    buat gambar = [];
+    untuk (buat i = 0; i < panjang(input["image_urls"]); i = i + 1) {
+        buat e = peta_baru(); e["url"] = input["image_urls"][i];
+        tambah(gambar, e);
+    }
+    buat media = peta_baru();
+    media["image"] = gambar;
+    jika tipe(input["video_urls"]) == "larik" && panjang(input["video_urls"]) > 0 {
+        buat video = [];
+        untuk (buat i = 0; i < panjang(input["video_urls"]); i = i + 1) {
+            buat e = peta_baru(); e["url"] = input["video_urls"][i];
+            tambah(video, e);
+        }
+        media["video"] = video;
+    }
+
+    buat info = peta_baru();
+    info["name"] = _biz_trim(input["name"]);
+    info["media"] = media;
+    info["is_hidden"] = (input["is_hidden"] == benar);
+    jika panjang(_biz_teks(input["description"])) > 0 { info["description"] = input["description"]; }
+    jika panjang(_biz_teks(input["url"])) > 0 { info["url"] = input["url"]; }
+    jika panjang(_biz_teks(input["retailer_id"])) > 0 { info["retailer_id"] = input["retailer_id"]; }
+    jika panjang(_biz_teks(input["price"])) > 0 {
+        info["currency"] = _biz_teks(input["currency"]);
+        info["price"] = input["price"];
+    }
+    jika panjang(_biz_teks(input["sale_price"])) > 0 { info["sale_price"] = input["sale_price"]; }
+
+    buat comp = input["compliance_info"];
+    jika tipe(comp) == "peta" {
+        buat c = peta_baru();
+        c["country_code_origin"] = _biz_teks(comp["country_code_origin"]);
+        jika panjang(_biz_teks(comp["importer_name"])) > 0 { c["importer_name"] = comp["importer_name"]; }
+        buat addr = comp["importer_address"];
+        jika tipe(addr) == "peta" {
+            buat a = peta_baru();
+            a["country_code"] = _biz_teks(addr["country_code"]);
+            a["city"] = _biz_teks(addr["city"]);
+            a["street1"] = _biz_teks(addr["street1"]);
+            jika panjang(_biz_teks(addr["street2"])) > 0 { a["street2"] = addr["street2"]; }
+            jika panjang(_biz_teks(addr["region"])) > 0 { a["region"] = addr["region"]; }
+            jika panjang(_biz_teks(addr["postal_code"])) > 0 { a["postal_code"] = addr["postal_code"]; }
+            c["importer_address"] = a;
+        }
+        info["compliance_info"] = c;
+    }
+    jika panjang(_biz_teks(input["compliance_category"])) > 0 {
+        info["compliance_category"] = input["compliance_category"];
+    }
+    hasil info;
+}
+
+fungsi biz_vars_mutasi_produk(bisnis_jid, product_id, input, lebar, tinggi) {
+    buat JidTeks = _biz_validasi_jid(bisnis_jid);
+    buat pid = _biz_teks(product_id);
+    jika panjang(pid) > 0 { _biz_validasi_id("produk", pid); }
+    _biz_validasi_input_produk(input);
+    buat d = _biz_dimensi(lebar, tinggi);
+
+    buat p = peta_baru();
+    p["biz_jid"] = JidTeks;
+    p["width"] = d[0];
+    p["height"] = d[1];
+    p["product_info"] = _biz_info_produk(input);
+    jika panjang(pid) > 0 { p["product_id"] = pid; }
+    buat inner = peta_baru(); inner["product"] = p;
+    buat outer = peta_baru(); outer["input"] = inner;
+    hasil json_encode(outer);
+}
+
+fungsi biz_vars_hapus_produk(bisnis_jid, product_ids) {
+    buat JidTeks = _biz_validasi_jid(bisnis_jid);
+    jika tipe(product_ids) != "larik" || panjang(product_ids) < 1 || panjang(product_ids) > 100 {
+        lempar "hapus produk bisnis harus berisi 1 sampai 100 ID";
+    }
+    untuk (buat i = 0; i < panjang(product_ids); i = i + 1) { _biz_validasi_id("produk", product_ids[i]); }
+    _biz_duplikat(product_ids, "ID produk");
+    buat inner = peta_baru();
+    inner["biz_jid"] = JidTeks;
+    inner["product_ids"] = product_ids;
+    buat outer = peta_baru(); outer["input"] = inner;
+    hasil json_encode(outer);
+}
+
+fungsi biz_dekode_mutasi_produk(data, diskriminator) {
+    buat v = _biz_json(data);
+    buat root = v[diskriminator];
+    jika tipe(root) != "peta" { lempar "respons mutasi produk bisnis kehilangan " + diskriminator; }
+    buat p = root["product"];
+    jika tipe(p) != "peta" || panjang(_biz_teks(p["id"])) == 0 {
+        lempar "respons " + diskriminator + " kehilangan produk";
+    }
+    hasil p;
+}
+
+fungsi biz_dekode_hapus_produk(data) {
+    buat v = _biz_json(data);
+    buat root = v["xfb_whatsapp_catalog_delete_product"];
+    jika tipe(root) != "peta" || tipe(root["deleted_count"]) != "angka" || root["deleted_count"] < 0 {
+        lempar "respons hapus produk bisnis kehilangan deleted_count";
+    }
+    hasil root["deleted_count"];
+}
+
+fungsi biz_buat_node_nonce(req_id) {
+    hasil _biz_iq(req_id, "fb:thrift_iq", "get", "118", []);
+}
+
+fungsi biz_buat_node_tukar_token(req_id, nonce) {
+    jika panjang(_biz_trim(nonce)) == 0 || panjang(nonce) > 8192 {
+        lempar "nonce akses token bisnis gak valid";
+    }
+    buat kode = _biz_node("code", peta_baru(), [], nonce);
+    buat par = _biz_node("parameters", peta_baru(), [kode], kosong);
+    hasil _biz_iq(req_id, "fb:thrift_iq", "get", "104", [par]);
+}
+
+fungsi biz_urai_respons_nonce(node) {
+    buat res = _biz_anak(node, "result");
+    jika tipe(res) != "peta" { lempar "respons nonce bisnis kehilangan result"; }
+    buat st = _biz_teks(res["attrs"]["status"]);
+    jika st == "Success" { hasil benar; }
+    jika st == "RecoveryRequired" { lempar "pemulihan akses token bisnis harus dilakukan di perangkat utama"; }
+    lempar "permintaan nonce bisnis balikin status gak dikenal: " + st;
+}
+
+fungsi biz_urai_token(node) {
+    jika tipe(node) != "peta" { lempar "respons akses token bisnis kosong"; }
+    buat tok = _biz_anak(node, "access_token");
+    jika tipe(tok) != "peta" { lempar "respons akses token bisnis kehilangan access_token"; }
+    buat person = _biz_anak(node, "business_person");
+    jika tipe(person) != "peta" { lempar "respons akses token bisnis kehilangan business_person"; }
+    jika tipe(tok["content"]) != "teks" || panjang(tok["content"]) == 0 || panjang(tok["content"]) > 16384 {
+        lempar "respons akses token bisnis punya token gak valid";
+    }
+    buat actor = _biz_teks(person["attrs"]["id"]);
+    jika panjang(actor) == 0 || panjang(actor) > 256 {
+        lempar "respons akses token bisnis punya business person gak valid";
+    }
+    buat r = peta_baru();
+    r["access_token"] = tok["content"];
+    r["actor_id"] = actor;
+    hasil r;
+}
+
+fungsi biz_ambil_nonce_notifikasi(node) {
+    buat n = _biz_anak(node, "wa_ad_account_nonce");
+    jika tipe(n) != "peta" || tipe(n["content"]) != "teks" { hasil ""; }
+    jika panjang(n["content"]) == 0 || panjang(n["content"]) > 8192 { hasil ""; }
+    hasil n["content"];
+}
+
+fungsi biz_klasifikasi_error_token(node) {
+    buat e = _biz_anak(node, "error");
+    jika tipe(e) != "peta" { hasil ""; }
+    buat kode = _biz_teks(e["attrs"]["code"]);
+    jika kode == "432" { hasil "nonce_salah"; }
+    jika kode == "431" { hasil "terlalu_banyak_percobaan"; }
+    hasil "";
+}
+
+fungsi biz_auth_baru() {
+    buat s = peta_baru();
+    s["access_token"] = "";
+    s["actor_id"] = "";
+    s["nonce"] = "";
+    hasil s;
+}
+
+fungsi biz_auth_simpan_nonce(state, nonce) {
+    jika tipe(state) != "peta" { hasil salah; }
+    jika tipe(nonce) != "teks" || panjang(nonce) == 0 { hasil salah; }
+    state["nonce"] = nonce;
+    hasil benar;
+}
+
+fungsi biz_auth_simpan_token(state, token) {
+    jika tipe(state) != "peta" || tipe(token) != "peta" { hasil salah; }
+    state["access_token"] = _biz_teks(token["access_token"]);
+    state["actor_id"] = _biz_teks(token["actor_id"]);
+    hasil benar;
+}
+
+fungsi biz_auth_batalkan_token(state, token) {
+    jika tipe(state) != "peta" { hasil salah; }
+    jika state["access_token"] == token {
+        state["access_token"] = "";
+        state["actor_id"] = "";
+        hasil benar;
+    }
+    hasil salah;
+}
+
+fungsi biz_vars_dengan_actor(variables_json, actor_id) {
+    jika panjang(_biz_trim(actor_id)) == 0 { lempar "actor ID mutasi katalog bisnis kosong"; }
+    buat v = json_decode(variables_json);
+    jika tipe(v) != "peta" || tipe(v["input"]) != "peta" {
+        lempar "variabel mutasi katalog bisnis kehilangan input";
+    }
+    v["input"]["actor_id"] = actor_id;
+    hasil json_encode(v);
+}
+
+fungsi biz_graphql(endpoint, doc_id, access_token, variables_json, device_id) {
+    buat body = "{\"access_token\":" + json_encode(access_token)
+        + ",\"doc_id\":" + json_encode(doc_id)
+        + ",\"variables\":" + variables_json
+        + ",\"locale\":\"en_US\"}";
+    buat tag = ke_teks(waktu()) + "_" + CP["acak_bytes_hex"](4);
+    buat path_body = "/tmp/bizgql_req_" + tag + ".json";
+    buat path_resp = "/tmp/bizgql_res_" + tag + ".json";
+    tulis_file(path_body, body);
+
+    buat args = ["-sS", "-X", "POST",
+        "--connect-timeout", "15", "--max-time", "30",
+        "-o", path_resp, "-w", "%{http_code}",
+        "-H", "Accept: application/json",
+        "-H", "Content-Type: application/json",
+        "-H", "Origin: https://web.whatsapp.com",
+        "-H", "Referer: https://web.whatsapp.com/"];
+    jika tipe(device_id) == "angka" && device_id > 0 {
+        tambah(args, "-H");
+        tambah(args, "X-WA-Device-ID: " + ke_teks(device_id));
+    }
+    tambah(args, "--data-binary");
+    tambah(args, "@" + path_body);
+    tambah(args, endpoint);
+
+    buat res = jalankan_perintah("curl", args);
+    buat r = peta_baru();
+    r["ok"] = salah;
+    r["status"] = 0;
+    r["data"] = kosong;
+    r["error_codes"] = [];
+    r["pesan"] = "";
+    jika res["status"] != 0 {
+        r["pesan"] = "request GraphQL bisnis gagal: " + ke_teks(res["error"]);
+        hasil r;
+    }
+    r["status"] = ke_angka(_biz_trim(res["keluaran"]));
+    buat mentah = baca_file(path_resp);
+    jika panjang(mentah) > BIZ_MAKS_RESPONS_GRAPHQL {
+        r["pesan"] = "respons GraphQL bisnis lebih dari " + ke_teks(BIZ_MAKS_RESPONS_GRAPHQL) + " byte";
+        hasil r;
+    }
+    buat env = json_decode(mentah);
+    jika tipe(env) == "peta" {
+        jika tipe(env["errors"]) == "larik" {
+            untuk (buat i = 0; i < panjang(env["errors"]); i = i + 1) {
+                tambah(r["error_codes"], env["errors"][i]["code"]);
+            }
+        }
+        jika tipe(env["error"]) == "peta" { tambah(r["error_codes"], env["error"]["code"]); }
+    }
+    jika r["status"] < 200 || r["status"] >= 300 {
+        r["pesan"] = "request GraphQL bisnis gagal dengan status " + ke_teks(r["status"]);
+        hasil r;
+    }
+    jika tipe(env) != "peta" {
+        r["pesan"] = "respons GraphQL bisnis gak bisa didekode";
+        hasil r;
+    }
+    jika panjang(r["error_codes"]) > 0 {
+        r["pesan"] = "request GraphQL bisnis gagal dengan kode error";
+        hasil r;
+    }
+    jika tipe(env["data"]) != "peta" {
+        r["pesan"] = "respons GraphQL bisnis kehilangan data";
+        hasil r;
+    }
+    r["ok"] = benar;
+    r["data"] = env["data"];
+    hasil r;
+}
+
+fungsi biz_error_auth(res) {
+    jika tipe(res) != "peta" { hasil salah; }
+    jika res["status"] == 401 || res["status"] == 403 { hasil benar; }
+    untuk (buat i = 0; i < panjang(res["error_codes"]); i = i + 1) {
+        jika res["error_codes"][i] == 190 || res["error_codes"][i] == 400 { hasil benar; }
+    }
+    hasil salah;
+}
+
+fungsi biz_eksekusi_mutasi(state, doc_id, variables_json, device_id) {
+    jika tipe(state) != "peta" || panjang(_biz_teks(state["access_token"])) == 0 {
+        lempar "akses token bisnis belum ada: jalanin alur biz_buat_node_nonce -> biz_buat_node_tukar_token -> biz_auth_simpan_token";
+    }
+    buat vars = biz_vars_dengan_actor(variables_json, state["actor_id"]);
+    buat res = biz_graphql(BIZ_ENDPOINT_GRAPHQL, doc_id, state["access_token"], vars, device_id);
+    jika res["ok"] { hasil res["data"]; }
+    jika biz_error_auth(res) { biz_auth_batalkan_token(state, state["access_token"]); }
+    lempar "mutasi katalog bisnis gagal: " + res["pesan"];
+}
+
+fungsi biz_kepatuhan_query(bisnis_jid, device_id) {
+    buat vars = biz_vars_kepatuhan_query(bisnis_jid);
+    buat res = biz_graphql(BIZ_ENDPOINT_KATALOG, BIZ_Q_KEPATUHAN, BIZ_TOKEN_KATALOG, vars, device_id);
+    jika !res["ok"] { lempar "ambil kepatuhan merchant bisnis gagal: " + res["pesan"]; }
+    hasil biz_dekode_kepatuhan(res["data"], "xfb_whatsapp_biz_merchant_compliance_info");
+}
+
+fungsi _biz_tipe_gambar(gambar) {
+    jika tipe(gambar) != "teks" || panjang(gambar) < 8 { hasil ""; }
+    jika byte_di(gambar, 0) == 255 && byte_di(gambar, 1) == 216 { hasil "image/jpeg"; }
+    jika byte_di(gambar, 0) == 137 && byte_di(gambar, 1) == 80
+        && byte_di(gambar, 2) == 78 && byte_di(gambar, 3) == 71 { hasil "image/png"; }
+    hasil "";
+}
+
+fungsi biz_validasi_gambar_produk(gambar) {
+    jika tipe(gambar) != "teks" || panjang(gambar) == 0 { lempar "gambar produk bisnis kosong"; }
+    jika panjang(gambar) > BIZ_MAKS_GAMBAR_PRODUK {
+        lempar "gambar produk bisnis lebih dari " + ke_teks(BIZ_MAKS_GAMBAR_PRODUK) + " byte";
+    }
+    jika panjang(_biz_tipe_gambar(gambar)) == 0 { lempar "gambar produk bisnis harus JPEG atau PNG"; }
+    hasil CP["hex_decode"](sha256_hex(gambar));
+}
+
+fungsi biz_validasi_cover(gambar) {
+    jika tipe(gambar) != "teks" || panjang(gambar) == 0 { lempar "foto sampul bisnis kosong"; }
+    jika panjang(gambar) > BIZ_MAKS_COVER {
+        lempar "foto sampul bisnis lebih dari " + ke_teks(BIZ_MAKS_COVER) + " byte";
+    }
+    jika panjang(_biz_tipe_gambar(gambar)) == 0 { lempar "foto sampul bisnis harus JPEG atau PNG"; }
+    hasil CP["hex_decode"](sha256_hex(gambar));
+}
+
+fungsi _biz_unggah(gambar, media_conn, path_prefix, content_type) {
+    jika tipe(media_conn) != "peta" || tipe(media_conn["host"]) != "larik" || panjang(media_conn["host"]) == 0 {
+        lempar "respons koneksi media gak punya host upload";
+    }
+    buat hash_bytes = "";
+    jika path_prefix == "/product/image/" { hash_bytes = biz_validasi_gambar_produk(gambar); }
+    lain { hash_bytes = biz_validasi_cover(gambar); }
+
+    buat token = _biz_base64_url(hash_bytes);
+    buat tag = ke_teks(waktu()) + "_" + CP["acak_bytes_hex"](4);
+    buat path_body = "/tmp/bizupload_" + tag + ".bin";
+    buat path_resp = "/tmp/bizupload_res_" + tag + ".json";
+    tulis_file(path_body, gambar);
+
+    buat url = "https://" + media_conn["host"][0] + path_prefix + token
+        + "?auth=" + media_conn["auth"] + "&token=" + token;
+    buat res = jalankan_perintah("curl", ["-sS", "-X", "POST",
+        "--connect-timeout", "15", "--max-time", "60",
+        "-o", path_resp, "-w", "%{http_code}",
+        "-H", "Content-Type: " + content_type,
+        "-H", "Origin: https://web.whatsapp.com",
+        "-H", "Referer: https://web.whatsapp.com/",
+        "--data-binary", "@" + path_body, url]);
+    jika res["status"] != 0 { lempar "unggah bisnis gagal: " + ke_teks(res["error"]); }
+    buat kode = ke_angka(_biz_trim(res["keluaran"]));
+    jika kode != 200 { lempar "unggah bisnis gagal dengan status " + ke_teks(kode); }
+    buat j = json_decode(baca_file(path_resp));
+    jika tipe(j) != "peta" { lempar "respons unggah bisnis gak valid"; }
+    hasil j;
+}
+
+fungsi biz_unggah_gambar_produk(gambar, media_conn) {
+    buat j = _biz_unggah(gambar, media_conn, "/product/image/", "application/octet-stream");
+    jika panjang(_biz_teks(j["url"])) > 0 {
+        _biz_validasi_url_media(j["url"]);
+        hasil j["url"];
+    }
+    buat dp = _biz_teks(j["direct_path"]);
+    jika panjang(dp) == 0 || potong(dp, 0, 1) != "/" || panjang(dp) > 4096 {
+        lempar "respons unggah gambar produk bisnis gak punya URL valid";
+    }
+    hasil "https://mmg.whatsapp.net" + dp;
+}
+
+fungsi biz_unggah_cover(gambar, media_conn) {
+    buat j = _biz_unggah(gambar, media_conn, "/pps/biz-cover-photo/", _biz_tipe_gambar(gambar));
+    buat r = peta_baru();
+    r["meta_hmac"] = _biz_teks(j["meta_hmac"]);
+    r["fbid"] = _biz_teks(j["fbid"]);
+    r["ts"] = _biz_teks(j["ts"]);
+    jika panjang(r["meta_hmac"]) == 0 || panjang(r["fbid"]) == 0 || panjang(r["ts"]) == 0 {
+        lempar "respons unggah foto sampul bisnis gak lengkap";
+    }
+    hasil r;
+}
+
+fungsi _biz_node_mutasi_profil(anak) {
+    buat a = peta_baru();
+    a["v"] = "3";
+    a["mutation_type"] = "delta";
+    hasil _biz_node("business_profile", a, anak, kosong);
+}
+
+fungsi biz_hari_profil() {
+    hasil ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+}
+
+fungsi biz_mode_jam_profil() {
+    hasil ["specific_hours", "open_24h", "appointment_only"];
+}
+
+fungsi _biz_ada_di(list, v) {
+    untuk (buat i = 0; i < panjang(list); i = i + 1) {
+        jika list[i] == v { hasil benar; }
+    }
+    hasil salah;
+}
+
+fungsi _biz_node_jam_bisnis(jam) {
+    buat tz = _biz_teks(jam["timezone"]);
+    jika panjang(tz) == 0 || panjang(tz) > 128 { lempar "timezone jam bisnis gak valid"; }
+    buat hari = jam["days"];
+    jika tipe(hari) != "larik" { hari = []; }
+    jika panjang(hari) > 7 { lempar "jam bisnis maksimal 7 hari"; }
+
+    buat seen = peta_baru();
+    buat konfig = [];
+    untuk (buat i = 0; i < panjang(hari); i = i + 1) {
+        buat d = hari[i];
+        buat dow = _biz_teks(d["day_of_week"]);
+        jika !_biz_ada_di(biz_hari_profil(), dow) { lempar "hari jam bisnis gak valid: " + dow; }
+        jika seen[dow] == benar { lempar "hari jam bisnis dobel: " + dow; }
+        seen[dow] = benar;
+        buat mode = _biz_teks(d["mode"]);
+        jika !_biz_ada_di(biz_mode_jam_profil(), mode) { lempar "mode jam bisnis gak valid: " + mode; }
+
+        buat a = peta_baru();
+        a["day_of_week"] = dow;
+        a["mode"] = mode;
+        buat buka = d["open_time"];
+        buat tutup = d["close_time"];
+        jika tipe(buka) != "angka" { buka = 0; }
+        jika tipe(tutup) != "angka" { tutup = 0; }
+        jika mode == "specific_hours" {
+            jika buka < 0 || buka > 1439 || tutup < 0 || tutup > 1439 || buka == tutup {
+                lempar "jam spesifik gak valid buat " + dow;
+            }
+            a["open_time"] = ke_teks(buka);
+            a["close_time"] = ke_teks(tutup);
+        } lain jika buka != 0 || tutup != 0 {
+            lempar "mode " + mode + " gak nerima open/close time";
+        }
+        tambah(konfig, _biz_node("business_hours_config", a, [], kosong));
+    }
+    buat ha = peta_baru();
+    ha["timezone"] = _biz_trim(tz);
+    hasil _biz_node("business_hours", ha, konfig, kosong);
+}
+
+fungsi biz_buat_node_update_profil(req_id, update) {
+    jika tipe(update) != "peta" { lempar "update profil bisnis kosong"; }
+    buat ada_alamat = (tipe(update["address"]) == "teks");
+    buat ada_email = (tipe(update["email"]) == "teks");
+    buat ada_desk = (tipe(update["description"]) == "teks");
+    buat ada_web = (tipe(update["websites"]) == "larik");
+    buat ada_jam = (tipe(update["hours"]) == "peta");
+    jika !ada_alamat && !ada_email && !ada_desk && !ada_web && !ada_jam {
+        lempar "update profil bisnis kosong";
+    }
+    jika ada_alamat && panjang(update["address"]) > 512 { lempar "alamat bisnis lebih dari 512 byte"; }
+    jika ada_desk && panjang(update["description"]) > 1024 { lempar "deskripsi bisnis lebih dari 1024 byte"; }
+    jika ada_email {
+        jika panjang(update["email"]) > 320 { lempar "email bisnis lebih dari 320 byte"; }
+        jika panjang(update["email"]) > 0 {
+            buat at = 0;
+            buat titik = salah;
+            untuk (buat i = 0; i < panjang(update["email"]); i = i + 1) {
+                jika byte_di(update["email"], i) == 64 { at = at + 1; }
+                jika byte_di(update["email"], i) == 46 && at == 1 { titik = benar; }
+            }
+            jika at != 1 || !titik { lempar "email bisnis gak valid"; }
+        }
+    }
+
+    buat anak = [];
+    jika ada_alamat { tambah(anak, _biz_node("address", peta_baru(), [], update["address"])); }
+    jika ada_email { tambah(anak, _biz_node("email", peta_baru(), [], update["email"])); }
+    jika ada_desk { tambah(anak, _biz_node("description", peta_baru(), [], update["description"])); }
+    jika ada_web {
+        buat ws = update["websites"];
+        jika panjang(ws) > 2 { lempar "profil bisnis maksimal 2 website"; }
+        jika panjang(ws) == 0 { tambah(anak, _biz_node("website", peta_baru(), [], "")); }
+        untuk (buat i = 0; i < panjang(ws); i = i + 1) {
+            buat w = _biz_teks(ws[i]);
+            jika panjang(w) > 2048 { lempar "website bisnis lebih dari 2048 byte"; }
+            buat ok_http = (panjang(w) > 7 && potong(w, 0, 7) == "http://");
+            buat ok_https = (panjang(w) > 8 && potong(w, 0, 8) == "https://");
+            jika !ok_http && !ok_https { lempar "website bisnis bukan URL HTTP absolut: " + w; }
+            tambah(anak, _biz_node("website", peta_baru(), [], w));
+        }
+    }
+    jika ada_jam { tambah(anak, _biz_node_jam_bisnis(update["hours"])); }
+
+    hasil _biz_iq(req_id, "w:biz", "set", kosong, [_biz_node_mutasi_profil(anak)]);
+}
+
+fungsi biz_buat_node_set_cover(req_id, unggah) {
+    jika tipe(unggah) != "peta" || panjang(_biz_teks(unggah["meta_hmac"])) == 0
+        || panjang(_biz_teks(unggah["fbid"])) == 0 || panjang(_biz_teks(unggah["ts"])) == 0 {
+        lempar "respons unggah foto sampul bisnis gak lengkap";
+    }
+    buat a = peta_baru();
+    a["id"] = unggah["fbid"];
+    a["op"] = "update";
+    a["token"] = unggah["meta_hmac"];
+    a["ts"] = unggah["ts"];
+    buat cover = _biz_node("cover_photo", a, [], kosong);
+    hasil _biz_iq(req_id, "w:biz", "set", kosong, [_biz_node_mutasi_profil([cover])]);
+}
+
+fungsi biz_buat_node_hapus_cover(req_id, cover_id) {
+    jika panjang(_biz_trim(cover_id)) == 0 { lempar "ID foto sampul bisnis kosong"; }
+    jika panjang(cover_id) > 256 { lempar "ID foto sampul bisnis lebih dari 256 byte"; }
+    buat a = peta_baru();
+    a["id"] = cover_id;
+    a["op"] = "delete";
+    buat cover = _biz_node("cover_photo", a, [], kosong);
+    hasil _biz_iq(req_id, "w:biz", "set", kosong, [_biz_node_mutasi_profil([cover])]);
+}
+
+fungsi _biz_pemilik_valid(j) {
+    coba { _biz_validasi_jid(j); hasil benar; } tangkap (e) { hasil salah; }
+}
+
+fungsi biz_bangun_pesan_produk(params) {
+    jika tipe(params) != "peta" { lempar "parameter pesan produk bisnis kosong"; }
+    jika !_biz_pemilik_valid(params["business_owner_jid"]) { lempar "JID pemilik bisnis gak valid"; }
+    buat pemilik = _biz_jid_teks(params["business_owner_jid"]);
+    buat pid = _biz_teks(params["product_id"]);
+    buat judul = _biz_teks(params["title"]);
+    jika panjang(_biz_trim(pid)) == 0 || !_biz_batas(pid, 256)
+        || panjang(_biz_trim(judul)) == 0 || !_biz_batas(judul, 256) {
+        lempar "identitas produk bisnis gak valid";
+    }
+    buat deskripsi = _biz_teks(params["description"]);
+    buat retailer = _biz_teks(params["retailer_id"]);
+    buat url = _biz_teks(params["url"]);
+    buat body = _biz_teks(params["body"]);
+    buat footer = _biz_teks(params["footer"]);
+    jika !_biz_batas(deskripsi, 4096) || !_biz_batas(retailer, 256) || !_biz_batas(url, 2048)
+        || !_biz_batas(body, 1024) || !_biz_batas(footer, 60) {
+        lempar "field pesan produk bisnis kegedean";
+    }
+    buat harga = params["price_amount_1000"];
+    buat harga_diskon = params["sale_price_amount_1000"];
+    jika tipe(harga) != "angka" { harga = 0; }
+    jika tipe(harga_diskon) != "angka" { harga_diskon = 0; }
+    jika harga < 0 || harga_diskon < 0 { lempar "harga produk bisnis gak valid"; }
+    buat mata_uang = _biz_teks(params["currency_code"]);
+    buat ada_harga = (harga != 0 || panjang(mata_uang) > 0);
+    buat diskon_ada = (params["sale_price_present"] == benar);
+    jika !ada_harga && (harga_diskon > 0 || diskon_ada) {
+        lempar "harga diskon produk bisnis butuh harga dasar";
+    }
+    jika ada_harga && !_biz_mata_uang_valid(mata_uang) { lempar "mata uang produk bisnis gak valid"; }
+    buat jml_gambar = params["product_image_count"];
+    jika tipe(jml_gambar) != "angka" { jml_gambar = 0; }
+    jika jml_gambar > 10 { lempar "produk bisnis gak boleh lebih dari 10 gambar"; }
+    jika panjang(url) > 0 && panjang(_biz_host(url)) == 0 {
+        lempar "URL produk bisnis harus HTTPS absolut";
+    }
+
+    buat snap = "";
+    jika tipe(params["product_image"]) == "teks" && panjang(params["product_image"]) > 0 {
+        snap = snap + PB.PbBytes(1, params["product_image"]);
+    }
+    snap = snap + PB.PbBytes(2, pid) + PB.PbBytes(3, judul);
+    jika panjang(deskripsi) > 0 { snap = snap + PB.PbBytes(4, deskripsi); }
+    jika panjang(mata_uang) > 0 { snap = snap + PB.PbBytes(5, mata_uang); }
+    jika ada_harga || harga != 0 { snap = snap + PB.PbVarint(6, harga); }
+    jika panjang(retailer) > 0 { snap = snap + PB.PbBytes(7, retailer); }
+    jika panjang(url) > 0 { snap = snap + PB.PbBytes(8, url); }
+    jika jml_gambar > 0 { snap = snap + PB.PbVarint(9, jml_gambar); }
+    jika diskon_ada || harga_diskon > 0 { snap = snap + PB.PbVarint(12, harga_diskon); }
+
+    buat f = PB.PbBytes(1, snap) + PB.PbBytes(2, pemilik);
+    jika panjang(body) > 0 { f = f + PB.PbBytes(5, body); }
+    jika panjang(footer) > 0 { f = f + PB.PbBytes(6, footer); }
+    buat ci = MS.BangunContextInfo(params["kutip"]);
+    jika panjang(ci) > 0 { f = f + PB.PbBytes(17, ci); }
+    hasil PB.PbBytes(30, f);
+}
+
+fungsi biz_bangun_pesan_daftar_produk(params) {
+    jika tipe(params) != "peta" { lempar "parameter daftar produk bisnis kosong"; }
+    jika !_biz_pemilik_valid(params["business_owner_jid"]) { lempar "JID pemilik bisnis gak valid"; }
+    buat pemilik = _biz_jid_teks(params["business_owner_jid"]);
+    buat judul = _biz_teks(params["title"]);
+    buat deskripsi = _biz_teks(params["description"]);
+    buat tombol = _biz_teks(params["button_text"]);
+    buat footer = _biz_teks(params["footer"]);
+    jika panjang(_biz_trim(judul)) == 0 || !_biz_batas(judul, 60) || !_biz_batas(deskripsi, 1024)
+        || panjang(_biz_trim(tombol)) == 0 || !_biz_batas(tombol, 20) || !_biz_batas(footer, 60) {
+        lempar "teks daftar produk bisnis gak valid";
+    }
+    buat seksi = params["sections"];
+    jika tipe(seksi) != "larik" || panjang(seksi) == 0 || panjang(seksi) > 10 {
+        lempar "daftar produk bisnis harus 1 sampai 10 seksi";
+    }
+    buat seen = peta_baru();
+    buat jml_produk = 0;
+    buat seksi_wire = "";
+    untuk (buat i = 0; i < panjang(seksi); i = i + 1) {
+        buat s = seksi[i];
+        buat st = _biz_teks(s["title"]);
+        buat ids = s["product_ids"];
+        jika tipe(ids) != "larik" { ids = []; }
+        jika !_biz_batas(st, 24) || panjang(ids) == 0
+            || (panjang(seksi) > 1 && panjang(_biz_trim(st)) == 0) {
+            lempar "seksi produk bisnis gak valid: " + ke_teks(i);
+        }
+        jika panjang(ids) > 30 - jml_produk { lempar "daftar produk bisnis lebih dari 30 produk"; }
+        jml_produk = jml_produk + panjang(ids);
+        buat produk_wire = "";
+        untuk (buat p = 0; p < panjang(ids); p = p + 1) {
+            buat pid = _biz_teks(ids[p]);
+            jika panjang(_biz_trim(pid)) == 0 || !_biz_batas(pid, 256) {
+                lempar "ID produk gak valid di seksi " + ke_teks(i);
+            }
+            jika seen[pid] == benar { lempar "ID produk dobel " + pid; }
+            seen[pid] = benar;
+            produk_wire = produk_wire + PB.PbBytes(2, PB.PbBytes(1, pid));
+        }
+        buat sw = "";
+        jika panjang(st) > 0 { sw = sw + PB.PbBytes(1, st); }
+        sw = sw + produk_wire;
+        seksi_wire = seksi_wire + PB.PbBytes(1, sw);
+    }
+    buat info = seksi_wire + PB.PbBytes(3, pemilik);
+
+    buat f = PB.PbBytes(1, judul);
+    jika panjang(deskripsi) > 0 { f = f + PB.PbBytes(2, deskripsi); }
+    f = f + PB.PbBytes(3, tombol) + PB.PbVarint(4, 2) + PB.PbBytes(6, info);
+    jika panjang(footer) > 0 { f = f + PB.PbBytes(7, footer); }
+    buat ci = MS.BangunContextInfo(params["kutip"]);
+    jika panjang(ci) > 0 { f = f + PB.PbBytes(8, ci); }
+    hasil PB.PbBytes(36, f);
+}
+
+fungsi biz_bangun_pesan_order(params) {
+    jika tipe(params) != "peta" { lempar "parameter pesan order bisnis kosong"; }
+    jika !_biz_pemilik_valid(params["seller_jid"]) { lempar "JID penjual gak valid"; }
+    buat penjual = _biz_jid_teks(params["seller_jid"]);
+    buat oid = _biz_teks(params["order_id"]);
+    buat token = _biz_teks(params["token"]);
+    buat jml = params["item_count"];
+    jika tipe(jml) != "angka" { jml = 0; }
+    jika panjang(_biz_trim(oid)) == 0 || !_biz_batas(oid, 256)
+        || (panjang(token) > 0 && panjang(_biz_trim(token)) == 0) || jml < 1 || jml > 100 {
+        lempar "identitas order bisnis gak valid";
+    }
+    buat status = params["status"];
+    jika tipe(status) != "angka" { status = 0; }
+    buat total = params["total_amount_1000"];
+    jika tipe(total) != "angka" { total = 0; }
+    buat mata_uang = _biz_teks(params["total_currency_code"]);
+    jika status < 1 || status > 3 || total < 0 || !_biz_mata_uang_valid(mata_uang) {
+        lempar "state order bisnis gak valid";
+    }
+    buat thumb = _biz_teks(params["thumbnail"]);
+    buat pesan = _biz_teks(params["message"]);
+    buat judul = _biz_teks(params["order_title"]);
+    buat katalog = _biz_teks(params["catalog_type"]);
+    jika panjang(thumb) > 65536 || !_biz_batas(pesan, 4096) || !_biz_batas(judul, 256)
+        || !_biz_batas(token, 8192) || !_biz_batas(katalog, 128) {
+        lempar "field pesan order bisnis kegedean";
+    }
+
+    buat f = PB.PbBytes(1, oid);
+    jika panjang(thumb) > 0 { f = f + PB.PbBytes(2, thumb); }
+    f = f + PB.PbVarint(3, jml) + PB.PbVarint(4, status) + PB.PbVarint(5, 1);
+    jika panjang(pesan) > 0 { f = f + PB.PbBytes(6, pesan); }
+    jika panjang(judul) > 0 { f = f + PB.PbBytes(7, judul); }
+    f = f + PB.PbBytes(8, penjual);
+    jika panjang(token) > 0 { f = f + PB.PbBytes(9, token); }
+    f = f + PB.PbVarint(10, total) + PB.PbBytes(11, mata_uang);
+    jika panjang(katalog) > 0 { f = f + PB.PbBytes(15, katalog); }
+    buat ci = MS.BangunContextInfo(params["kutip"]);
+    jika panjang(ci) > 0 { f = f + PB.PbBytes(17, ci); }
+    hasil PB.PbBytes(38, f);
+}
+
+fungsi biz_bangun_pesan_list(params) {
+    jika tipe(params) != "peta" { lempar "parameter pesan list bisnis kosong"; }
+    buat judul = _biz_teks(params["title"]);
+    buat deskripsi = _biz_teks(params["description"]);
+    buat tombol = _biz_teks(params["button_text"]);
+    buat footer = _biz_teks(params["footer"]);
+    jika !_biz_batas(judul, 60) || panjang(_biz_trim(deskripsi)) == 0 || !_biz_batas(deskripsi, 1024)
+        || panjang(_biz_trim(tombol)) == 0 || !_biz_batas(tombol, 20) || !_biz_batas(footer, 60) {
+        lempar "teks list bisnis gak valid";
+    }
+    buat seksi = params["sections"];
+    jika tipe(seksi) != "larik" || panjang(seksi) == 0 || panjang(seksi) > 10 {
+        lempar "list bisnis harus 1 sampai 10 seksi";
+    }
+    buat seen = peta_baru();
+    buat jml_baris = 0;
+    buat seksi_wire = "";
+    untuk (buat i = 0; i < panjang(seksi); i = i + 1) {
+        buat s = seksi[i];
+        buat st = _biz_teks(s["title"]);
+        buat baris = s["rows"];
+        jika tipe(baris) != "larik" { baris = []; }
+        jika !_biz_batas(st, 24) || panjang(baris) == 0
+            || (panjang(seksi) > 1 && panjang(_biz_trim(st)) == 0) {
+            lempar "seksi list bisnis gak valid: " + ke_teks(i);
+        }
+        jika panjang(baris) > 10 - jml_baris { lempar "list bisnis lebih dari 10 baris"; }
+        jml_baris = jml_baris + panjang(baris);
+        buat baris_wire = "";
+        untuk (buat b = 0; b < panjang(baris); b = b + 1) {
+            buat row = baris[b];
+            buat rid = _biz_teks(row["id"]);
+            buat rjudul = _biz_teks(row["title"]);
+            buat rdesk = _biz_teks(row["description"]);
+            jika panjang(_biz_trim(rid)) == 0 || !_biz_batas(rid, 200)
+                || panjang(_biz_trim(rjudul)) == 0 || !_biz_batas(rjudul, 24) || !_biz_batas(rdesk, 72) {
+                lempar "baris list bisnis gak valid " + ke_teks(b) + " di seksi " + ke_teks(i);
+            }
+            jika seen[rid] == benar { lempar "ID baris list bisnis dobel " + rid; }
+            seen[rid] = benar;
+            buat rw = PB.PbBytes(1, rjudul);
+            jika panjang(rdesk) > 0 { rw = rw + PB.PbBytes(2, rdesk); }
+            rw = rw + PB.PbBytes(3, rid);
+            baris_wire = baris_wire + PB.PbBytes(2, rw);
+        }
+        buat sw = "";
+        jika panjang(st) > 0 { sw = sw + PB.PbBytes(1, st); }
+        sw = sw + baris_wire;
+        seksi_wire = seksi_wire + PB.PbBytes(5, sw);
+    }
+
+    buat f = PB.PbBytes(1, judul) + PB.PbBytes(2, deskripsi) + PB.PbBytes(3, tombol)
+        + PB.PbVarint(4, 1) + seksi_wire;
+    jika panjang(footer) > 0 { f = f + PB.PbBytes(7, footer); }
+    buat ci = MS.BangunContextInfo(params["kutip"]);
+    jika panjang(ci) > 0 { f = f + PB.PbBytes(8, ci); }
+    hasil PB.PbBytes(36, f);
+}
+
+fungsi biz_bangun_pesan_tombol_native_flow(params) {
+    jika tipe(params) != "peta" { lempar "parameter tombol native-flow bisnis kosong"; }
+    buat body = _biz_teks(params["body"]);
+    buat judul = _biz_teks(params["title"]);
+    buat footer = _biz_teks(params["footer"]);
+    jika panjang(_biz_trim(body)) == 0 || !_biz_batas(body, 1024)
+        || !_biz_batas(judul, 60) || !_biz_batas(footer, 60) {
+        lempar "teks native-flow bisnis gak valid";
+    }
+    buat tombol = params["buttons"];
+    jika tipe(tombol) != "larik" || panjang(tombol) == 0 || panjang(tombol) > 3 {
+        lempar "pesan native-flow bisnis harus punya 1 sampai 3 tombol";
+    }
+    buat tombol_wire = "";
+    untuk (buat i = 0; i < panjang(tombol); i = i + 1) {
+        buat b = tombol[i];
+        buat nama = _biz_teks(b["name"]);
+        buat pj = _biz_teks(b["params_json"]);
+        jika panjang(_biz_trim(nama)) == 0 || !_biz_batas(nama, 64)
+            || panjang(_biz_trim(pj)) == 0 || !_biz_batas(pj, 8192) {
+            lempar "tombol native-flow bisnis gak valid " + ke_teks(i);
+        }
+        jika tipe(json_decode(pj)) != "peta" {
+            lempar "params native-flow bisnis gak valid buat tombol " + ke_teks(i);
+        }
+        buat nf = PB.PbBytes(1, nama) + PB.PbBytes(2, pj);
+        tombol_wire = tombol_wire + PB.PbBytes(9, PB.PbVarint(3, 2) + PB.PbBytes(4, nf));
+    }
+
+    buat f = "";
+    buat header_type = 1;
+    jika panjang(judul) > 0 {
+        f = f + PB.PbBytes(1, judul);
+        header_type = 2;
+    }
+    f = f + PB.PbBytes(6, body);
+    jika panjang(footer) > 0 { f = f + PB.PbBytes(7, footer); }
+    buat ci = MS.BangunContextInfo(params["kutip"]);
+    jika panjang(ci) > 0 { f = f + PB.PbBytes(8, ci); }
+    f = f + tombol_wire + PB.PbVarint(10, header_type);
+    hasil PB.PbBytes(42, f);
+}
+
+fungsi _biz_interaktif_native_flow(body, footer, nama, button_params, kutip) {
+    buat nf = PB.PbBytes(1, PB.PbBytes(1, nama) + PB.PbBytes(2, button_params)) + PB.PbVarint(3, 1);
+    buat f = PB.PbBytes(2, PB.PbBytes(1, body));
+    jika panjang(footer) > 0 { f = f + PB.PbBytes(3, PB.PbBytes(1, footer)); }
+    buat ci = MS.BangunContextInfo(kutip);
+    jika panjang(ci) > 0 { f = f + PB.PbBytes(15, ci); }
+    f = f + PB.PbBytes(6, nf);
+    hasil PB.PbBytes(45, f);
+}
+
+fungsi biz_bangun_pesan_alamat(params) {
+    jika tipe(params) != "peta" { lempar "parameter pesan alamat bisnis kosong"; }
+    buat body = _biz_teks(params["body"]);
+    buat tombol = _biz_teks(params["button_text"]);
+    buat footer = _biz_teks(params["footer"]);
+    jika panjang(_biz_trim(body)) == 0 || !_biz_batas(body, 1024)
+        || panjang(_biz_trim(tombol)) == 0 || !_biz_batas(tombol, 20) || !_biz_batas(footer, 60) {
+        lempar "teks pesan alamat bisnis gak valid";
+    }
+    buat bp = peta_baru();
+    bp["display_text"] = tombol;
+    hasil _biz_interaktif_native_flow(body, footer, "address_message", json_encode(bp), params["kutip"]);
+}
+
+fungsi biz_bangun_pesan_flow(params) {
+    jika tipe(params) != "peta" { lempar "parameter pesan flow bisnis kosong"; }
+    buat body = _biz_teks(params["body"]);
+    buat tombol = _biz_teks(params["button_text"]);
+    buat footer = _biz_teks(params["footer"]);
+    jika panjang(_biz_trim(body)) == 0 || !_biz_batas(body, 1024)
+        || panjang(_biz_trim(tombol)) == 0 || !_biz_batas(tombol, 20) || !_biz_batas(footer, 60) {
+        lempar "teks pesan flow bisnis gak valid";
+    }
+    buat flow_id = _biz_teks(params["flow_id"]);
+    buat flow_token = _biz_teks(params["flow_token"]);
+    jika panjang(_biz_trim(flow_id)) == 0 || !_biz_batas(flow_id, 256)
+        || panjang(_biz_trim(flow_token)) == 0 || !_biz_batas(flow_token, 8192) {
+        lempar "identitas flow bisnis gak valid";
+    }
+    buat aksi = _biz_teks(params["flow_action"]);
+    jika aksi != "navigate" && aksi != "data_exchange" { lempar "aksi flow bisnis gak valid"; }
+    buat layar = _biz_teks(params["screen"]);
+    jika !_biz_batas(layar, 256) || (aksi == "navigate" && panjang(_biz_trim(layar)) == 0) {
+        lempar "layar flow bisnis gak valid";
+    }
+    buat data_json = _biz_teks(params["data_json"]);
+    jika aksi == "data_exchange" && (panjang(layar) > 0 || panjang(data_json) > 0) {
+        lempar "flow data-exchange gak boleh bawa action payload";
+    }
+    jika !_biz_batas(data_json, 16384) { lempar "data flow bisnis kegedean"; }
+    buat data_obj = kosong;
+    jika panjang(data_json) > 0 {
+        data_obj = json_decode(data_json);
+        jika tipe(data_obj) != "peta" { lempar "data flow bisnis harus objek JSON"; }
+    }
+
+    buat bp = peta_baru();
+    bp["flow_message_version"] = "3";
+    bp["flow_token"] = flow_token;
+    bp["flow_id"] = flow_id;
+    bp["flow_cta"] = tombol;
+    bp["flow_action"] = aksi;
+    jika aksi == "navigate" {
+        buat payload = peta_baru();
+        jika panjang(layar) > 0 { payload["screen"] = layar; }
+        jika tipe(data_obj) == "peta" { payload["data"] = data_obj; }
+        bp["flow_action_payload"] = payload;
+    }
+    hasil _biz_interaktif_native_flow(body, footer, "galaxy_message", json_encode(bp), params["kutip"]);
+}

@@ -1,0 +1,145 @@
+buat QR_EVENT_KODE      = "code";
+buat QR_EVENT_ERROR     = "error";
+buat QR_EVENT_PASSKEY_REQ = "passkey-request";
+buat QR_EVENT_PASSKEY_KONFIRM = "passkey-confirmation";
+buat QR_EVENT_SUKSES    = "success";
+buat QR_EVENT_TIMEOUT   = "timeout";
+buat QR_EVENT_STATE_ANEH = "err-unexpected-state";
+buat QR_EVENT_CLIENT_TUA = "err-client-outdated";
+buat QR_EVENT_TANPA_MD  = "err-scanned-without-multidevice";
+
+buat QR_TIMEOUT_PERTAMA = 60;
+buat QR_TIMEOUT_LANJUT  = 20;
+
+fungsi _qr_item(event) {
+    buat i = peta_baru();
+    i["event"] = event;
+    i["kode"] = "";
+    i["error"] = "";
+    i["timeout"] = 0;
+    hasil i;
+}
+
+fungsi qr_baru() {
+    buat s = peta_baru();
+    s["kode"] = [];
+    s["indeks"] = 0;
+    s["batas_waktu"] = 0;
+    s["tertutup"] = salah;
+    s["akhir"] = kosong;
+    s["antrian"] = [];
+    hasil s;
+}
+
+fungsi qr_set_kode(state, daftar_kode) {
+    jika tipe(daftar_kode) != "larik" { lempar "daftar kode QR harus larik"; }
+    state["kode"] = daftar_kode;
+    state["indeks"] = 0;
+    state["batas_waktu"] = 0;
+    hasil panjang(daftar_kode);
+}
+
+fungsi qr_selesai(state) {
+    hasil state["tertutup"] == benar;
+}
+
+fungsi _qr_tutup(state, item) {
+    jika state["tertutup"] == benar { hasil salah; }
+    state["tertutup"] = benar;
+    state["akhir"] = item;
+    tambah(state["antrian"], item);
+    hasil benar;
+}
+
+fungsi qr_kode_berikutnya(state) {
+    jika state["tertutup"] == benar { hasil kosong; }
+    jika state["indeks"] >= panjang(state["kode"]) {
+        _qr_tutup(state, _qr_item(QR_EVENT_TIMEOUT));
+        hasil state["akhir"];
+    }
+    buat sisa = panjang(state["kode"]) - state["indeks"];
+    buat batas = QR_TIMEOUT_LANJUT;
+    jika sisa == 6 { batas = QR_TIMEOUT_PERTAMA; }
+
+    buat item = _qr_item(QR_EVENT_KODE);
+    item["kode"] = state["kode"][state["indeks"]];
+    item["timeout"] = batas;
+    state["indeks"] = state["indeks"] + 1;
+    state["batas_waktu"] = waktu() + batas;
+    hasil item;
+}
+
+fungsi qr_kode_kadaluarsa(state) {
+    jika state["tertutup"] == benar { hasil salah; }
+    jika state["batas_waktu"] == 0 { hasil benar; }
+    hasil waktu() >= state["batas_waktu"];
+}
+
+fungsi qr_tick(state) {
+    jika state["tertutup"] == benar { hasil kosong; }
+    jika !qr_kode_kadaluarsa(state) { hasil kosong; }
+    hasil qr_kode_berikutnya(state);
+}
+
+fungsi qr_tangani_event(state, nama_event, data) {
+    jika state["tertutup"] == benar { hasil kosong; }
+
+    jika nama_event == "qr" {
+        qr_set_kode(state, data);
+        hasil qr_kode_berikutnya(state);
+    }
+    jika nama_event == "qr-scanned-without-multidevice" {
+        buat i1 = _qr_item(QR_EVENT_TANPA_MD);
+        tambah(state["antrian"], i1);
+        hasil i1;
+    }
+    jika nama_event == "pair-passkey-request" {
+        buat i2 = _qr_item(QR_EVENT_PASSKEY_REQ);
+        i2["data"] = data;
+        tambah(state["antrian"], i2);
+        hasil i2;
+    }
+    jika nama_event == "pair-passkey-confirmation" {
+        buat i3 = _qr_item(QR_EVENT_PASSKEY_KONFIRM);
+        i3["data"] = data;
+        i3["otomatis"] = salah;
+        jika tipe(data) == "peta" && data["skip_handoff_ux"] == benar { i3["otomatis"] = benar; }
+        tambah(state["antrian"], i3);
+        hasil i3;
+    }
+    jika nama_event == "pair-passkey-error" {
+        buat i4 = _qr_item(QR_EVENT_ERROR);
+        i4["error"] = ke_teks(data);
+        tambah(state["antrian"], i4);
+        hasil i4;
+    }
+
+    buat akhir = kosong;
+    jika nama_event == "client-outdated" { akhir = _qr_item(QR_EVENT_CLIENT_TUA); }
+    jika nama_event == "pair-success" { akhir = _qr_item(QR_EVENT_SUKSES); }
+    jika nama_event == "pair-error" {
+        akhir = _qr_item(QR_EVENT_ERROR);
+        akhir["error"] = ke_teks(data);
+    }
+    jika nama_event == "disconnected" { akhir = _qr_item(QR_EVENT_TIMEOUT); }
+    jika nama_event == "connected" || nama_event == "connect-failure"
+        || nama_event == "logged-out" || nama_event == "temporary-ban" {
+        akhir = _qr_item(QR_EVENT_STATE_ANEH);
+    }
+    jika tipe(akhir) != "peta" { hasil kosong; }
+
+    _qr_tutup(state, akhir);
+    hasil akhir;
+}
+
+fungsi qr_ambil_antrian(state) {
+    buat out = state["antrian"];
+    state["antrian"] = [];
+    hasil out;
+}
+
+fungsi qr_bisa_mulai(sudah_konek, ada_id_tersimpan) {
+    jika sudah_konek == benar { lempar "GetQRChannel harus dipanggil sebelum konek"; }
+    jika ada_id_tersimpan == benar { lempar "store udah punya JID, gak perlu QR"; }
+    hasil benar;
+}

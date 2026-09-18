@@ -1,0 +1,160 @@
+// Helper buat kirim pesan "Bloks Widget" (im_a2ui) -- UI native declaratif
+// ala Meta (Column/Text/Image/Card dst, lihat https://a2ui.org/), BUKAN
+// trik HTML-embed kayak lib/airich.ns. Dirender langsung sama klien WA,
+// jadi gak kena batasan sandbox WebView (fetch/gambar diblokir dll).
+buat MS = impor("../nusantara_modules/hypermeow-ns/msgsend.ns");
+buat CP = muat_plugin("crypto");
+
+fungsi _secret_acak() {
+    hasil base64_encode(CP["hex_decode"](CP["acak_bytes_hex"](32)));
+}
+
+fungsi _uuid_acak() {
+    buat hx = CP["acak_bytes_hex"](16);
+    hasil potong(hx, 0, 8) + "-" + potong(hx, 8, 12) + "-" + potong(hx, 12, 16) + "-" + potong(hx, 16, 20) + "-" + potong(hx, 20, 32);
+}
+
+// ---- Komponen (tiap fungsi balikin satu peta {id, component, ...}) ----
+
+fungsi teksC(id, isi, varian) {
+    buat c = peta_baru();
+    c["id"] = id;
+    c["component"] = "Text";
+    c["text"] = isi;
+    jika tipe(varian) == "teks" && panjang(varian) > 0 { c["variant"] = varian; }
+    hasil c;
+}
+
+fungsi kolomC(id, anak_id_list) {
+    buat c = peta_baru();
+    c["id"] = id;
+    c["component"] = "Column";
+    c["children"] = anak_id_list;
+    hasil c;
+}
+
+fungsi barisC(id, anak_id_list) {
+    buat c = peta_baru();
+    c["id"] = id;
+    c["component"] = "Row";
+    c["children"] = anak_id_list;
+    hasil c;
+}
+
+fungsi gambarC(id, url, varian, fit) {
+    buat c = peta_baru();
+    c["id"] = id;
+    c["component"] = "Image";
+    c["url"] = url;
+    jika tipe(varian) == "teks" && panjang(varian) > 0 { c["variant"] = varian; }
+    jika tipe(fit) == "teks" && panjang(fit) > 0 { c["fit"] = fit; }
+    hasil c;
+}
+
+fungsi kartuC(id, anak_id) {
+    buat c = peta_baru();
+    c["id"] = id;
+    c["component"] = "Card";
+    c["child"] = anak_id;
+    hasil c;
+}
+
+// ---- Tombol native_flow (dipasang di nativeFlowMessage.buttons) ----
+
+fungsi tombolUrl(label, url) {
+    buat b = peta_baru();
+    b["name"] = "cta_url";
+    buat p = peta_baru();
+    p["display_text"] = label;
+    p["url"] = url;
+    p["merchant_url"] = url;
+    b["buttonParamsJSON"] = json_encode(p);
+    hasil b;
+}
+
+fungsi tombolBalasanCepat(label, id_perintah) {
+    buat b = peta_baru();
+    b["name"] = "quick_reply";
+    buat p = peta_baru();
+    p["display_text"] = label;
+    p["id"] = id_perintah;
+    b["buttonParamsJSON"] = json_encode(p);
+    hasil b;
+}
+
+fungsi tombolList(label_tombol, sections) {
+    buat b = peta_baru();
+    b["name"] = "single_select";
+    buat p = peta_baru();
+    p["title"] = label_tombol;
+    p["sections"] = sections;
+    b["buttonParamsJSON"] = json_encode(p);
+    hasil b;
+}
+
+// kirim(wa, komponen_list, opsi)
+// opsi: {footer, tombol: [tombolUrl(...)/tombolBalasanCepat(...)/...], expiration}
+fungsi kirim(wa, komponen_list, opsi) {
+    jika tipe(wa) == "kosong" { lempar "wa API belum siap"; }
+    jika tipe(opsi) != "peta" { opsi = peta_baru(); }
+
+    buat uuid = _uuid_acak();
+    buat surface = peta_baru();
+    surface["surfaceId"] = "starcore-widget=" + uuid;
+    surface["catalogId"] = "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json";
+    surface["components"] = komponen_list;
+
+    buat payload = peta_baru();
+    payload["version"] = "v0.9";
+    payload["createSurface"] = surface;
+
+    buat msg = peta_baru();
+    buat mci = peta_baru();
+    mci["messageSecret"] = _secret_acak();
+    msg["messageContextInfo"] = mci;
+
+    buat bw = peta_baru();
+    bw["uuid"] = uuid;
+    bw["data"] = json_encode(payload);
+    bw["type"] = "im_a2ui";
+
+    buat im = peta_baru();
+    buat header = peta_baru();
+    header["hasMediaAttachment"] = salah;
+    im["header"] = header;
+
+    buat body = peta_baru();
+    body["text"] = "";
+    jika tipe(opsi["teks"]) == "teks" { body["text"] = opsi["teks"]; }
+    im["body"] = body;
+
+    jika tipe(opsi["footer"]) == "teks" && panjang(opsi["footer"]) > 0 {
+        buat footer = peta_baru();
+        footer["text"] = opsi["footer"];
+        im["footer"] = footer;
+    }
+
+    buat tombol_list = [peta_baru()];
+    jika tipe(opsi["tombol"]) == "larik" {
+        untuk (buat i = 0; i < panjang(opsi["tombol"]); i = i + 1) { tambah(tombol_list, opsi["tombol"][i]); }
+    }
+    buat nfm = peta_baru();
+    nfm["buttons"] = tombol_list;
+    nfm["messageParamsJSON"] = "{}";
+    nfm["messageVersion"] = 1;
+    im["nativeFlowMessage"] = nfm;
+    im["bloksWidget"] = bw;
+
+    buat exp = 7776000;
+    jika tipe(opsi["expiration"]) == "angka" { exp = opsi["expiration"]; }
+    buat ci = peta_baru();
+    ci["expiration"] = exp;
+    im["contextInfo"] = ci;
+
+    msg["interactiveMessage"] = im;
+
+    buat opsi_kirim = peta_baru();
+    opsi_kirim["additionalNodes"] = MS.BuatNodeBizBypass();
+    opsi_kirim["label"] = "[a2ui] " + ke_teks(panjang(komponen_list)) + " komponen";
+    hasil wa.SendMessage(msg, opsi_kirim);
+}

@@ -1,0 +1,38 @@
+
+buat BOT_PKG = impor("bot/bot.ns");
+buat RUNTIME = impor("bot/runtime.ns");
+buat ST      = impor("hypermeow-ns/store/session.ns");
+buat DB      = impor("database/db.ns");
+buat ARSIP   = impor("database/arsip.ns");
+buat UTILS   = impor("lib/utils.ns");
+
+cetak("Starting WhatsApp Self-Bot...");
+
+buat db_path = ambil_env("DATABASE_PATH", "database/wa-bot.db");
+ST.InisialisasiStore(db_path);
+DB.Init(db_path);
+
+buat config = peta_baru();
+config["MessagePrefix"] = ".";
+config["DbPath"]        = db_path;
+config["Mode"]          = "self";
+config["SelfMode"]      = benar;
+config["GcOnly"]        = salah;
+config["PrivateOnly"]   = salah;
+config["AntiCall"]      = benar;
+
+buat waBot = BOT_PKG.New(config);
+buat pm = waBot["GetPluginManager"]();
+
+cetak("Plugins registered:");
+buat plugins_list = pm["GetAll"]();
+untuk (buat i = 0; i < panjang(plugins_list); i = i + 1) {
+    buat p = plugins_list[i];
+    cetak("  • " + p["GetName"]() + " v" + p["GetVersion"]() + " - " + p["GetDescription"]());
+}
+
+cetak("Available commands: menu, allmenu, ping, test");
+
+buat target_num = ambil_env("BOT_NUMBER", "");
+
+RUNTIME.jalankan_selamanya(waBot, DB, ARSIP, UTILS, target_num);

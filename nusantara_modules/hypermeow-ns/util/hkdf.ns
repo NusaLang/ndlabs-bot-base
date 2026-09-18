@@ -1,0 +1,34 @@
+
+buat _crypto = muat_plugin("crypto");
+
+fungsi hex_ke_bytes(h) { hasil _crypto["hex_decode"](h); }
+fungsi bytes_ke_hex(s) { hasil _crypto["hex_encode"](s); }
+
+fungsi _byte_char(i) {
+    buat d = "0123456789abcdef";
+    jika i < 16 { hasil _crypto["hex_decode"]("0" + potong(d, i, i + 1)); }
+    hasil _crypto["hex_decode"](potong(d, i / 16, i / 16 + 1) + potong(d, i % 16, i % 16 + 1));
+}
+
+fungsi HkdfExtract(salt, ikm) {
+
+    jika panjang(salt) == 0 { salt = hex_ke_bytes("0000000000000000000000000000000000000000000000000000000000000000"); }
+    hasil hmac_sha256_hex(salt, ikm);
+}
+
+fungsi HkdfExpand(prk_hex, info, panjang_out) {
+    buat prk = hex_ke_bytes(prk_hex);
+    buat okm = "";
+    buat t = "";
+    buat i = 1;
+    selama panjang(okm) < panjang_out {
+        t = hex_ke_bytes(hmac_sha256_hex(prk, t + info + _byte_char(i)));
+        okm = okm + t;
+        i = i + 1;
+    }
+    hasil potong(okm, 0, panjang_out);
+}
+
+fungsi HkdfSha256(ikm, salt, info, panjang_out) {
+    hasil HkdfExpand(HkdfExtract(salt, ikm), info, panjang_out);
+}

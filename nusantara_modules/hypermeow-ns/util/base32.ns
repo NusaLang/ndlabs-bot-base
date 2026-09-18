@@ -1,0 +1,31 @@
+
+buat ALPHA = "123456789ABCDEFGHJKLMNPQRSTVWXYZ";
+
+fungsi EnkodeBase325byte(bytes_5) {
+    jika panjang(bytes_5) != 5 { lempar "enkode_base32_5byte butuh 5 byte"; }
+    buat b0 = byte_di(bytes_5, 0);
+    buat b1 = byte_di(bytes_5, 1);
+    buat b2 = byte_di(bytes_5, 2);
+    buat b3 = byte_di(bytes_5, 3);
+    buat b4 = byte_di(bytes_5, 4);
+
+    buat i0 = (b0 - (b0 % 8)) / 8;
+    buat i1 = (b0 % 8) * 4 + (b1 - (b1 % 64)) / 64;
+    buat i2 = ((b1 % 64) - (b1 % 2)) / 2;
+    buat i3 = (b1 % 2) * 16 + (b2 - (b2 % 16)) / 16;
+    buat i4 = (b2 % 16) * 2 + (b3 - (b3 % 128)) / 128;
+    buat i5 = ((b3 % 128) - (b3 % 4)) / 4;
+    buat i6 = (b3 % 4) * 8 + (b4 - (b4 % 32)) / 32;
+    buat i7 = b4 % 32;
+
+    buat r0 = potong(ALPHA, i0, i0 + 1);
+    buat r1 = potong(ALPHA, i1, i1 + 1);
+    buat r2 = potong(ALPHA, i2, i2 + 1);
+    buat r3 = potong(ALPHA, i3, i3 + 1);
+    buat r4 = potong(ALPHA, i4, i4 + 1);
+    buat r5 = potong(ALPHA, i5, i5 + 1);
+    buat r6 = potong(ALPHA, i6, i6 + 1);
+    buat r7 = potong(ALPHA, i7, i7 + 1);
+
+    hasil r0 + r1 + r2 + r3 + r4 + r5 + r6 + r7;
+}

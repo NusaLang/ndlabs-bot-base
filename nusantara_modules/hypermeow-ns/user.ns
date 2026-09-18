@@ -1,0 +1,559 @@
+buat SERVER_USER = "s.whatsapp.net";
+
+fungsi _jid(usr, srv) {
+    buat j = peta_baru();
+    j["jid"] = benar; j["user"] = usr; j["server"] = srv; j["device"] = 0; j["agent"] = 0;
+    hasil j;
+}
+
+fungsi _node(tag, attrs, children, content) {
+    buat n = peta_baru();
+    n["tag"] = tag;
+    jika tipe(attrs) == "peta" { n["attrs"] = attrs; } lain { n["attrs"] = peta_baru(); }
+    jika tipe(children) == "larik" { n["children"] = children; } lain { n["children"] = []; }
+    jika tipe(content) == "teks" { n["content"] = content; n["ada_isi"] = benar; }
+    lain jika panjang(n["children"]) > 0 { n["content"] = kosong; n["ada_isi"] = benar; }
+    lain { n["content"] = kosong; n["ada_isi"] = salah; }
+    hasil n;
+}
+
+fungsi _iq(req_id, tujuan, tipe_iq, xmlns, anak) {
+    buat a = peta_baru();
+    a["id"] = req_id; a["to"] = tujuan; a["type"] = tipe_iq; a["xmlns"] = xmlns;
+    hasil _node("iq", a, anak, kosong);
+}
+
+fungsi _usync(req_id, users_node, query_node, mode, konteks) {
+    buat ua = peta_baru();
+    ua["sid"] = req_id; ua["mode"] = mode; ua["last"] = "true"; ua["index"] = "0"; ua["context"] = konteks;
+    buat isi = [_node("query", peta_baru(), query_node, kosong), _node("list", peta_baru(), users_node, kosong)];
+    hasil _iq(req_id, _jid("", SERVER_USER), "get", "usync", [_node("usync", ua, isi, kosong)]);
+}
+
+fungsi buat_node_cek_nomor(req_id, nomor_list) {
+    buat users = [];
+    untuk (buat i = 0; i < panjang(nomor_list); i = i + 1) {
+        buat n = nomor_list[i];
+        jika potong(n, 0, 1) != "+" { n = "+" + n; }
+        tambah(users, _node("user", peta_baru(), [_node("contact", peta_baru(), [], n)], kosong));
+    }
+    buat ca = peta_baru(); ca["addressing_mode"] = "lid";
+    buat q = [
+        _node("contact", ca, [], kosong),
+        _node("business", peta_baru(), [_node("verified_name", peta_baru(), [], kosong)], kosong),
+        _node("disappearing_mode", peta_baru(), [], kosong),
+        _node("username", peta_baru(), [], kosong)
+    ];
+    hasil _usync(req_id, users, q, "query", "interactive");
+}
+
+fungsi buat_node_info_user(req_id, user_list) {
+    buat users = [];
+    untuk (buat i = 0; i < panjang(user_list); i = i + 1) {
+        buat ua = peta_baru();
+        ua["jid"] = _jid(user_list[i], SERVER_USER);
+        tambah(users, _node("user", ua, [], kosong));
+    }
+    buat q = [
+        _node("status", peta_baru(), [], kosong),
+        _node("picture", peta_baru(), [], kosong),
+        _node("devices", peta_baru(), [], kosong),
+        _node("business", peta_baru(), [_node("verified_name", peta_baru(), [], kosong)], kosong)
+    ];
+    hasil _usync(req_id, users, q, "full", "interactive");
+}
+
+fungsi buat_node_dapatkan_foto_profil(req_id, target_user, target_server, preview) {
+    buat pa = peta_baru();
+    pa["query"] = "url";
+    jika preview { pa["type"] = "preview"; } lain { pa["type"] = "image"; }
+    hasil _iq(req_id, _jid(target_user, target_server), "get", "w:profile:picture", [_node("picture", pa, [], kosong)]);
+}
+
+fungsi buat_node_daftar_blokir(req_id) {
+    hasil _iq(req_id, _jid("", SERVER_USER), "get", "blocklist", []);
+}
+
+fungsi buat_node_ubah_blokir(req_id, target_user, target_server, aksi) {
+    jika aksi != "block" && aksi != "unblock" { lempar "aksi blokir harus block/unblock"; }
+    buat ia = peta_baru();
+    ia["action"] = aksi;
+    ia["jid"] = _jid(target_user, target_server);
+    hasil _iq(req_id, _jid("", SERVER_USER), "set", "blocklist", [_node("item", ia, [], kosong)]);
+}
+
+fungsi buat_node_set_status(req_id, teks_status) {
+    hasil _iq(req_id, _jid("", SERVER_USER), "set", "status", [_node("status", peta_baru(), [], teks_status)]);
+}
+
+fungsi buat_node_pengaturan_privasi(req_id) {
+    hasil _iq(req_id, _jid("", SERVER_USER), "get", "privacy", [_node("privacy", peta_baru(), [], kosong)]);
+}
+
+fungsi buat_node_set_privasi(req_id, nama, nilai) {
+    buat ca = peta_baru(); ca["name"] = nama; ca["value"] = nilai;
+    buat p = _node("privacy", peta_baru(), [_node("category", ca, [], kosong)], kosong);
+    hasil _iq(req_id, _jid("", SERVER_USER), "set", "privacy", [p]);
+}
+
+fungsi urai_respons_cek_nomor(node) {
+    buat r = peta_baru(); r["ok"] = salah; r["hasil"] = [];
+    buat list_node = _cari_list_usync(node);
+    jika tipe(list_node) != "peta" { hasil r; }
+    untuk (buat i = 0; i < panjang(list_node["children"]); i = i + 1) {
+        buat u = list_node["children"][i];
+        jika u["tag"] != "user" { lanjut; }
+        buat e = peta_baru();
+        e["terdaftar"] = salah;
+        e["nomor"] = "";
+        e["jid"] = kosong;
+        e["lid"] = kosong;
+        untuk (buat c = 0; c < panjang(u["children"]); c = c + 1) {
+            buat ch = u["children"][c];
+            jika ch["tag"] == "contact" {
+                jika ch["attrs"]["type"] == "in" { e["terdaftar"] = benar; }
+                jika tipe(ch["content"]) == "teks" { e["nomor"] = ch["content"]; }
+                jika tipe(ch["attrs"]["lid"]) == "peta" { e["lid"] = ch["attrs"]["lid"]; }
+            }
+        }
+        jika tipe(u["attrs"]["jid"]) == "peta" { e["jid"] = u["attrs"]["jid"]; }
+        tambah(r["hasil"], e);
+    }
+    r["ok"] = benar;
+    hasil r;
+}
+
+fungsi _cari_list_usync(node) {
+    jika tipe(node["children"]) != "larik" { hasil kosong; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        buat us = node["children"][i];
+        jika us["tag"] != "usync" || tipe(us["children"]) != "larik" { lanjut; }
+        untuk (buat j = 0; j < panjang(us["children"]); j = j + 1) {
+            jika us["children"][j]["tag"] == "list" { hasil us["children"][j]; }
+        }
+    }
+    hasil kosong;
+}
+
+fungsi urai_respons_info_user(node) {
+    buat r = peta_baru(); r["ok"] = salah; r["user"] = [];
+    buat list_node = _cari_list_usync(node);
+    jika tipe(list_node) != "peta" { hasil r; }
+    untuk (buat i = 0; i < panjang(list_node["children"]); i = i + 1) {
+        buat u = list_node["children"][i];
+        jika u["tag"] != "user" { lanjut; }
+        buat e = peta_baru();
+        e["jid"] = u["attrs"]["jid"];
+        e["status"] = "";
+        e["foto_id"] = "";
+        e["nama_verified"] = "";
+        e["device"] = [];
+        untuk (buat c = 0; c < panjang(u["children"]); c = c + 1) {
+            buat ch = u["children"][c];
+            jika ch["tag"] == "status" && tipe(ch["content"]) == "teks" { e["status"] = ch["content"]; }
+            jika ch["tag"] == "picture" && tipe(ch["attrs"]["id"]) == "teks" { e["foto_id"] = ch["attrs"]["id"]; }
+            jika ch["tag"] == "devices" && tipe(ch["children"]) == "larik" {
+                untuk (buat d = 0; d < panjang(ch["children"]); d = d + 1) {
+                    buat dl = ch["children"][d];
+                    jika dl["tag"] != "device-list" || tipe(dl["children"]) != "larik" { lanjut; }
+                    untuk (buat d2 = 0; d2 < panjang(dl["children"]); d2 = d2 + 1) {
+                        jika dl["children"][d2]["tag"] == "device" {
+                            tambah(e["device"], dl["children"][d2]["attrs"]["id"]);
+                        }
+                    }
+                }
+            }
+            jika ch["tag"] == "business" && tipe(ch["children"]) == "larik" {
+                untuk (buat b = 0; b < panjang(ch["children"]); b = b + 1) {
+                    jika ch["children"][b]["tag"] == "verified_name" && tipe(ch["children"][b]["content"]) == "teks" {
+                        e["nama_verified"] = ch["children"][b]["content"];
+                    }
+                }
+            }
+        }
+        tambah(r["user"], e);
+    }
+    r["ok"] = benar;
+    hasil r;
+}
+
+fungsi urai_respons_foto_profil(node) {
+    buat r = peta_baru(); r["ok"] = salah;
+    jika tipe(node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        buat c = node["children"][i];
+        jika c["tag"] == "picture" {
+            r["ok"] = benar;
+            r["url"] = c["attrs"]["url"];
+            r["id"] = c["attrs"]["id"];
+            r["tipe"] = c["attrs"]["type"];
+            r["hash_langsung"] = c["attrs"]["direct_path"];
+            hasil r;
+        }
+    }
+    hasil r;
+}
+
+fungsi urai_respons_daftar_blokir(node) {
+    buat r = peta_baru(); r["ok"] = salah; r["jid"] = [];
+    jika tipe(node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        buat l = node["children"][i];
+        jika l["tag"] != "list" || tipe(l["children"]) != "larik" { lanjut; }
+        untuk (buat j = 0; j < panjang(l["children"]); j = j + 1) {
+            jika l["children"][j]["tag"] == "item" {
+                tambah(r["jid"], l["children"][j]["attrs"]["jid"]);
+            }
+        }
+        r["ok"] = benar;
+    }
+    hasil r;
+}
+
+fungsi buat_node_daftar_bot(req_id) {
+    buat ba = peta_baru(); ba["v"] = "2";
+    buat a = peta_baru();
+    a["id"] = req_id; a["to"] = _jid("", SERVER_USER); a["type"] = "get"; a["xmlns"] = "bot";
+    hasil _node("iq", a, [_node("bot", ba, [], kosong)], kosong);
+}
+
+fungsi buat_node_dapatkan_link_qr_kontak(req_id, revoke) {
+    buat qa = peta_baru(); qa["type"] = "contact";
+    jika revoke { qa["action"] = "revoke"; } lain { qa["action"] = "get"; }
+    buat a = peta_baru();
+    a["id"] = req_id; a["type"] = "set"; a["xmlns"] = "w:qr";
+    hasil _node("iq", a, [_node("qr", qa, [], kosong)], kosong);
+}
+
+fungsi buat_node_profil_bisnis(req_id, target_jid) {
+    buat pa = peta_baru(); pa["jid"] = target_jid;
+    buat ba = peta_baru(); ba["v"] = "244";
+    buat isi = _node("business_profile", ba, [_node("profile", pa, [], kosong)], kosong);
+    hasil _iq(req_id, _jid("", SERVER_USER), "get", "w:biz", [isi]);
+}
+
+fungsi buat_node_set_disappearing_default(req_id, durasi_detik) {
+    buat da = peta_baru(); da["duration"] = ke_teks(durasi_detik);
+    hasil _iq(req_id, _jid("", SERVER_USER), "set", "disappearing_mode", [_node("disappearing_mode", da, [], kosong)]);
+}
+
+fungsi buat_node_urai_link_bisnis(req_id, kode) {
+    buat qa = peta_baru(); qa["code"] = kode;
+    buat a = peta_baru();
+    a["id"] = req_id; a["type"] = "get"; a["xmlns"] = "w:qr";
+    hasil _node("iq", a, [_node("qr", qa, [], kosong)], kosong);
+}
+
+fungsi buat_node_urai_link_kontak(req_id, kode) {
+    buat qa = peta_baru(); qa["code"] = kode;
+    buat a = peta_baru();
+    a["id"] = req_id; a["type"] = "get"; a["xmlns"] = "w:qr";
+    hasil _node("iq", a, [_node("qr", qa, [], kosong)], kosong);
+}
+
+fungsi buat_node_usync_devices(req_id, user_list) {
+    buat users = [];
+    untuk (buat i = 0; i < panjang(user_list); i = i + 1) {
+        buat u = user_list[i];
+        buat ua = peta_baru(); ua["jid"] = _jid(u["user"], u["server"]);
+        tambah(users, _node("user", ua, [], kosong));
+    }
+    buat qa = peta_baru(); qa["version"] = "2";
+    buat q = [_node("devices", qa, [], kosong)];
+    hasil _usync(req_id, users, q, "query", "message");
+}
+
+fungsi buat_node_usync_profil_bot(req_id, bot_jid_list, persona_id_list) {
+    buat users = [];
+    untuk (buat i = 0; i < panjang(bot_jid_list); i = i + 1) {
+        buat ua = peta_baru(); ua["jid"] = bot_jid_list[i];
+        buat pa = peta_baru(); pa["persona_id"] = persona_id_list[i];
+        buat isi = _node("bot", peta_baru(), [_node("profile", pa, [], kosong)], kosong);
+        tambah(users, _node("user", ua, [isi], kosong));
+    }
+    hasil _usync(req_id, users, [], "query", "interactive");
+}
+
+fungsi buat_node_usync_username(req_id, username, key) {
+    buat ca = peta_baru(); ca["username"] = username;
+    jika tipe(key) == "teks" && panjang(key) > 0 { ca["pin"] = key; }
+    buat users = [_node("user", peta_baru(), [_node("contact", ca, [], kosong)], kosong)];
+    buat q = [
+        _node("contact", peta_baru(), [], kosong),
+        _node("business", peta_baru(), [_node("verified_name", peta_baru(), [], kosong)], kosong)
+    ];
+    hasil _usync(req_id, users, q, "query", "interactive");
+}
+
+fungsi urai_respons_daftar_bot(node) {
+    buat r = peta_baru(); r["ok"] = salah; r["bot"] = [];
+    jika tipe(node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        jika node["children"][i]["tag"] != "bot" { lanjut; }
+        buat sections = node["children"][i]["children"];
+        jika tipe(sections) != "larik" { lanjut; }
+        untuk (buat s = 0; s < panjang(sections); s = s + 1) {
+            jika sections[s]["tag"] != "section" || sections[s]["attrs"]["type"] != "all" { lanjut; }
+            buat bots = sections[s]["children"];
+            jika tipe(bots) != "larik" { lanjut; }
+            untuk (buat b = 0; b < panjang(bots); b = b + 1) {
+                jika bots[b]["tag"] != "bot" { lanjut; }
+                buat e = peta_baru();
+                e["persona_id"] = bots[b]["attrs"]["persona_id"];
+                e["jid"] = bots[b]["attrs"]["jid"];
+                tambah(r["bot"], e);
+            }
+        }
+        r["ok"] = benar;
+    }
+    hasil r;
+}
+
+fungsi urai_respons_link_bisnis(node) {
+    buat r = peta_baru(); r["ok"] = salah;
+    jika tipe(node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        buat qr = node["children"][i];
+        jika qr["tag"] != "qr" { lanjut; }
+        r["ok"] = benar;
+        r["jid"] = qr["attrs"]["jid"];
+        r["nama_dorong"] = "";
+        jika tipe(qr["attrs"]["notify"]) == "teks" { r["nama_dorong"] = qr["attrs"]["notify"]; }
+        r["pesan"] = "";
+        r["nama_verified"] = "";
+        r["level_verified"] = "";
+        r["ditandatangani"] = salah;
+        jika tipe(qr["children"]) == "larik" {
+            untuk (buat c = 0; c < panjang(qr["children"]); c = c + 1) {
+                buat ch = qr["children"][c];
+                jika ch["tag"] == "message" && tipe(ch["content"]) == "teks" { r["pesan"] = ch["content"]; }
+                jika ch["tag"] == "business" {
+                    jika tipe(ch["attrs"]["is_signed"]) == "teks" { r["ditandatangani"] = ch["attrs"]["is_signed"] == "true"; }
+                    jika tipe(ch["attrs"]["verified_name"]) == "teks" { r["nama_verified"] = ch["attrs"]["verified_name"]; }
+                    jika tipe(ch["attrs"]["verified_level"]) == "teks" { r["level_verified"] = ch["attrs"]["verified_level"]; }
+                }
+            }
+        }
+        hasil r;
+    }
+    hasil r;
+}
+
+fungsi urai_respons_link_kontak(node) {
+    buat r = peta_baru(); r["ok"] = salah;
+    jika tipe(node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        buat qr = node["children"][i];
+        jika qr["tag"] != "qr" { lanjut; }
+        r["ok"] = benar;
+        r["jid"] = qr["attrs"]["jid"];
+        r["nama_dorong"] = "";
+        jika tipe(qr["attrs"]["notify"]) == "teks" { r["nama_dorong"] = qr["attrs"]["notify"]; }
+        r["tipe"] = "";
+        jika tipe(qr["attrs"]["type"]) == "teks" { r["tipe"] = qr["attrs"]["type"]; }
+        hasil r;
+    }
+    hasil r;
+}
+
+fungsi urai_respons_link_qr_kontak(node) {
+    buat r = peta_baru(); r["ok"] = salah; r["kode"] = "";
+    jika tipe(node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        buat qr = node["children"][i];
+        jika qr["tag"] != "qr" { lanjut; }
+        jika tipe(qr["attrs"]["code"]) == "teks" {
+            r["ok"] = benar;
+            r["kode"] = qr["attrs"]["code"];
+            hasil r;
+        }
+    }
+    hasil r;
+}
+
+fungsi urai_respons_privasi(node) {
+    buat r = peta_baru(); r["ok"] = salah; r["pengaturan"] = peta_baru();
+    jika tipe(node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        jika node["children"][i]["tag"] != "privacy" { lanjut; }
+        buat kats = node["children"][i]["children"];
+        jika tipe(kats) != "larik" { lanjut; }
+        untuk (buat c = 0; c < panjang(kats); c = c + 1) {
+            jika kats[c]["tag"] != "category" { lanjut; }
+            jika tipe(kats[c]["attrs"]["name"]) == "teks" {
+                r["pengaturan"][kats[c]["attrs"]["name"]] = kats[c]["attrs"]["value"];
+            }
+        }
+        r["ok"] = benar;
+    }
+    hasil r;
+}
+
+fungsi urai_respons_profil_bisnis(node) {
+    buat r = peta_baru(); r["ok"] = salah;
+    jika tipe(node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        jika node["children"][i]["tag"] != "business_profile" { lanjut; }
+        buat prof = kosong;
+        untuk (buat c = 0; c < panjang(node["children"][i]["children"]); c = c + 1) {
+            jika node["children"][i]["children"][c]["tag"] == "profile" { prof = node["children"][i]["children"][c]; }
+        }
+        jika tipe(prof) != "peta" { lanjut; }
+        r["ok"] = benar;
+        r["jid"] = prof["attrs"]["jid"];
+        r["alamat"] = ""; r["email"] = ""; r["deskripsi"] = ""; r["website"] = []; r["kategori"] = [];
+        r["id_sampul"] = ""; r["zona_waktu"] = ""; r["jam_operasional"] = [];
+        untuk (buat p = 0; p < panjang(prof["children"]); p = p + 1) {
+            buat pc = prof["children"][p];
+            jika pc["tag"] == "address" && tipe(pc["content"]) == "teks" { r["alamat"] = pc["content"]; }
+            jika pc["tag"] == "email" && tipe(pc["content"]) == "teks" { r["email"] = pc["content"]; }
+            jika pc["tag"] == "description" && tipe(pc["content"]) == "teks" { r["deskripsi"] = pc["content"]; }
+            jika pc["tag"] == "website" && tipe(pc["content"]) == "teks" { tambah(r["website"], pc["content"]); }
+            jika pc["tag"] == "cover_photo" { r["id_sampul"] = pc["attrs"]["id"]; }
+            jika pc["tag"] == "business_hours" {
+                r["zona_waktu"] = pc["attrs"]["timezone"];
+                untuk (buat bh = 0; bh < panjang(pc["children"]); bh = bh + 1) {
+                    jika pc["children"][bh]["tag"] != "business_hours_config" { lanjut; }
+                    buat bha = pc["children"][bh]["attrs"];
+                    buat jam = peta_baru();
+                    jam["hari"] = bha["day_of_week"]; jam["mode"] = bha["mode"];
+                    jam["buka"] = bha["open_time"]; jam["tutup"] = bha["close_time"];
+                    tambah(r["jam_operasional"], jam);
+                }
+            }
+            jika pc["tag"] == "categories" && tipe(pc["children"]) == "larik" {
+                untuk (buat kt = 0; kt < panjang(pc["children"]); kt = kt + 1) {
+                    jika pc["children"][kt]["tag"] != "category" { lanjut; }
+                    buat kat = peta_baru();
+                    kat["id"] = pc["children"][kt]["attrs"]["id"];
+                    kat["nama"] = "";
+                    jika tipe(pc["children"][kt]["content"]) == "teks" { kat["nama"] = pc["children"][kt]["content"]; }
+                    tambah(r["kategori"], kat);
+                }
+            }
+        }
+        hasil r;
+    }
+    hasil r;
+}
+
+fungsi urai_respons_profil_bot(node) {
+    buat r = peta_baru(); r["ok"] = salah; r["profil"] = [];
+    buat list_node = _cari_list_usync(node);
+    jika tipe(list_node) != "peta" { hasil r; }
+    untuk (buat i = 0; i < panjang(list_node["children"]); i = i + 1) {
+        buat u = list_node["children"][i];
+        jika u["tag"] != "user" { lanjut; }
+        buat bot = kosong;
+        untuk (buat c = 0; c < panjang(u["children"]); c = c + 1) {
+            jika u["children"][c]["tag"] == "bot" { bot = u["children"][c]; }
+        }
+        jika tipe(bot) != "peta" { lanjut; }
+        buat profile = kosong;
+        untuk (buat c2 = 0; c2 < panjang(bot["children"]); c2 = c2 + 1) {
+            jika bot["children"][c2]["tag"] == "profile" { profile = bot["children"][c2]; }
+        }
+        jika tipe(profile) != "peta" { lanjut; }
+        buat e = peta_baru();
+        e["jid"] = u["attrs"]["jid"];
+        e["persona_id"] = profile["attrs"]["persona_id"];
+        e["nama"] = ""; e["atribut"] = ""; e["deskripsi"] = ""; e["kategori"] = "";
+        e["prompt"] = []; e["perintah"] = []; e["deskripsi_perintah"] = ""; e["default"] = salah;
+        untuk (buat p = 0; p < panjang(profile["children"]); p = p + 1) {
+            buat pc = profile["children"][p];
+            jika pc["tag"] == "name" && tipe(pc["content"]) == "teks" { e["nama"] = pc["content"]; }
+            jika pc["tag"] == "attributes" && tipe(pc["content"]) == "teks" { e["atribut"] = pc["content"]; }
+            jika pc["tag"] == "description" && tipe(pc["content"]) == "teks" { e["deskripsi"] = pc["content"]; }
+            jika pc["tag"] == "category" && tipe(pc["content"]) == "teks" { e["kategori"] = pc["content"]; }
+            jika pc["tag"] == "default" { e["default"] = benar; }
+            jika pc["tag"] == "commands" && tipe(pc["children"]) == "larik" {
+                untuk (buat cc = 0; cc < panjang(pc["children"]); cc = cc + 1) {
+                    jika pc["children"][cc]["tag"] == "description" && tipe(pc["children"][cc]["content"]) == "teks" {
+                        e["deskripsi_perintah"] = pc["children"][cc]["content"];
+                    }
+                    jika pc["children"][cc]["tag"] == "command" {
+                        buat cmd = peta_baru(); cmd["nama"] = ""; cmd["deskripsi"] = "";
+                        untuk (buat cd = 0; cd < panjang(pc["children"][cc]["children"]); cd = cd + 1) {
+                            buat cdn = pc["children"][cc]["children"][cd];
+                            jika cdn["tag"] == "name" && tipe(cdn["content"]) == "teks" { cmd["nama"] = cdn["content"]; }
+                            jika cdn["tag"] == "description" && tipe(cdn["content"]) == "teks" { cmd["deskripsi"] = cdn["content"]; }
+                        }
+                        tambah(e["perintah"], cmd);
+                    }
+                }
+            }
+            jika pc["tag"] == "prompts" && tipe(pc["children"]) == "larik" {
+                untuk (buat pp = 0; pp < panjang(pc["children"]); pp = pp + 1) {
+                    jika pc["children"][pp]["tag"] != "prompt" { lanjut; }
+                    buat emoji = ""; buat teks_prompt = "";
+                    untuk (buat pd = 0; pd < panjang(pc["children"][pp]["children"]); pd = pd + 1) {
+                        buat pdn = pc["children"][pp]["children"][pd];
+                        jika pdn["tag"] == "emoji" && tipe(pdn["content"]) == "teks" { emoji = pdn["content"]; }
+                        jika pdn["tag"] == "text" && tipe(pdn["content"]) == "teks" { teks_prompt = pdn["content"]; }
+                    }
+                    tambah(e["prompt"], emoji + " " + teks_prompt);
+                }
+            }
+        }
+        tambah(r["profil"], e);
+    }
+    r["ok"] = benar;
+    hasil r;
+}
+
+fungsi urai_respons_usync_devices(node) {
+    buat r = peta_baru(); r["ok"] = salah; r["device"] = [];
+    buat list_node = _cari_list_usync(node);
+    jika tipe(list_node) != "peta" { hasil r; }
+    untuk (buat i = 0; i < panjang(list_node["children"]); i = i + 1) {
+        buat u = list_node["children"][i];
+        jika u["tag"] != "user" || tipe(u["attrs"]["jid"]) != "peta" { lanjut; }
+        buat basis = u["attrs"]["jid"];
+        untuk (buat c = 0; c < panjang(u["children"]); c = c + 1) {
+            jika u["children"][c]["tag"] != "devices" { lanjut; }
+            buat dl_wrap = u["children"][c]["children"];
+            jika tipe(dl_wrap) != "larik" { lanjut; }
+            untuk (buat d = 0; d < panjang(dl_wrap); d = d + 1) {
+                jika dl_wrap[d]["tag"] != "device-list" || tipe(dl_wrap[d]["children"]) != "larik" { lanjut; }
+                untuk (buat d2 = 0; d2 < panjang(dl_wrap[d]["children"]); d2 = d2 + 1) {
+                    buat dv = dl_wrap[d]["children"][d2];
+                    jika dv["tag"] != "device" { lanjut; }
+                    buat dev_id = 0;
+                    jika tipe(dv["attrs"]["id"]) == "teks" {
+                        coba { dev_id = ke_angka(dv["attrs"]["id"]); } tangkap (err) {}
+                    }
+                    buat e = peta_baru();
+                    e["user"] = basis["user"]; e["server"] = basis["server"]; e["device"] = dev_id;
+                    e["is_hosted"] = (dv["attrs"]["is_hosted"] == "true");
+                    tambah(r["device"], e);
+                }
+            }
+        }
+    }
+    r["ok"] = benar;
+    hasil r;
+}
+
+fungsi urai_respons_usync_username(node) {
+    buat r = peta_baru(); r["ok"] = salah; r["butuh_kunci"] = salah;
+    buat list_node = _cari_list_usync(node);
+    jika tipe(list_node) != "peta" || panjang(list_node["children"]) != 1 { hasil r; }
+    buat u = list_node["children"][0];
+    jika u["tag"] != "user" { hasil r; }
+    buat contact = kosong;
+    untuk (buat c = 0; c < panjang(u["children"]); c = c + 1) {
+        jika u["children"][c]["tag"] == "contact" { contact = u["children"][c]; }
+    }
+    jika tipe(contact) != "peta" { hasil r; }
+    jika contact["attrs"]["type"] == "out" { hasil r; }
+    jika tipe(u["attrs"]["jid"]) != "peta" {
+        r["ok"] = benar;
+        r["butuh_kunci"] = benar;
+        hasil r;
+    }
+    r["ok"] = benar;
+    r["lid"] = u["attrs"]["jid"];
+    r["username"] = "";
+    jika tipe(contact["attrs"]["username"]) == "teks" { r["username"] = contact["attrs"]["username"]; }
+    hasil r;
+}

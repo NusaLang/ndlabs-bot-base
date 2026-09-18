@@ -1,0 +1,513 @@
+buat PB   = impor("proto/pb.ns");
+buat AK   = impor("appstate/keys.ns");
+buat LT   = impor("appstate/lthash.ns");
+buat ST   = impor("store/session.ns");
+buat CP   = muat_plugin("crypto");
+
+buat NAMA_REGULAR              = "regular";
+buat NAMA_REGULAR_LOW          = "regular_low";
+buat NAMA_REGULAR_HIGH         = "regular_high";
+buat NAMA_CRITICAL_BLOCK       = "critical_block";
+buat NAMA_CRITICAL_UNBLOCK_LOW = "critical_unblock_low";
+
+fungsi semua_nama_patch() {
+    hasil [NAMA_CRITICAL_BLOCK, NAMA_CRITICAL_UNBLOCK_LOW, NAMA_REGULAR_HIGH, NAMA_REGULAR, NAMA_REGULAR_LOW];
+}
+
+fungsi _jid(usr, srv) {
+    buat j = peta_baru();
+    j["jid"] = benar; j["user"] = usr; j["server"] = srv; j["device"] = 0; j["agent"] = 0;
+    hasil j;
+}
+
+fungsi _node(tag, attrs, children, content) {
+    buat n = peta_baru();
+    n["tag"] = tag;
+    jika tipe(attrs) == "peta" { n["attrs"] = attrs; } lain { n["attrs"] = peta_baru(); }
+    jika tipe(children) == "larik" { n["children"] = children; } lain { n["children"] = []; }
+    jika tipe(content) == "teks" { n["content"] = content; n["ada_isi"] = benar; }
+    lain jika panjang(n["children"]) > 0 { n["content"] = kosong; n["ada_isi"] = benar; }
+    lain { n["content"] = kosong; n["ada_isi"] = salah; }
+    hasil n;
+}
+
+fungsi buat_node_ambil_patch(req_id, nama, dari_versi, minta_snapshot) {
+    buat ca = peta_baru();
+    ca["name"] = nama;
+    jika minta_snapshot { ca["return_snapshot"] = "true"; } lain { ca["return_snapshot"] = "false"; }
+    jika !minta_snapshot { ca["version"] = ke_teks(dari_versi); }
+
+    buat a = peta_baru();
+    a["id"] = req_id; a["to"] = _jid("", "s.whatsapp.net"); a["type"] = "set"; a["xmlns"] = "w:sync:app:state";
+    hasil _node("iq", a, [_node("sync", peta_baru(), [_node("collection", ca, [], kosong)], kosong)], kosong);
+}
+
+fungsi buat_node_minta_kunci_appstate(msg_id, kita_jid, key_id_list) {
+    buat f = "";
+    untuk (buat i = 0; i < panjang(key_id_list); i = i + 1) {
+        f = f + PB.PbBytes(1, PB.PbBytes(1, key_id_list[i]));
+    }
+    buat req = PB.PbEnkode([PB.PbBytes(2, f)]);
+    buat proto_msg = PB.PbEnkode([PB.PbBytes(1, PB.PbVarint(1, 6) + PB.PbBytes(8, req))]);
+    hasil proto_msg;
+}
+
+fungsi urai_koleksi_patch(node) {
+    buat r = peta_baru();
+    r["ok"] = salah;
+    r["patch"] = [];
+    r["snapshot"] = kosong;
+
+    buat sync = kosong;
+    jika tipe(node["children"]) == "larik" {
+        untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+            jika node["children"][i]["tag"] == "sync" { sync = node["children"][i]; }
+        }
+    }
+    jika tipe(sync) != "peta" { hasil r; }
+
+    untuk (buat i = 0; i < panjang(sync["children"]); i = i + 1) {
+        buat col = sync["children"][i];
+        jika col["tag"] != "collection" { lanjut; }
+        r["nama"] = col["attrs"]["name"];
+        r["versi"] = ke_angka(col["attrs"]["version"]);
+        r["ok"] = benar;
+        jika tipe(col["children"]) != "larik" { lanjut; }
+        untuk (buat j = 0; j < panjang(col["children"]); j = j + 1) {
+            buat c = col["children"][j];
+            jika c["tag"] == "patches" && tipe(c["children"]) == "larik" {
+                untuk (buat p = 0; p < panjang(c["children"]); p = p + 1) {
+                    jika c["children"][p]["tag"] == "patch" {
+                        tambah(r["patch"], c["children"][p]["content"]);
+                    }
+                }
+            }
+            jika c["tag"] == "snapshot" { r["snapshot"] = c["content"]; }
+        }
+    }
+    hasil r;
+}
+
+fungsi urai_patch(patch_bin) {
+    buat f = PB.PbDekode(patch_bin);
+    buat p = peta_baru();
+    p["versi"] = 0;
+    jika tipe(f["1"]) == "teks" {
+        buat vf = PB.PbDekode(f["1"]);
+        jika tipe(vf["1"]) == "angka" { p["versi"] = vf["1"]; }
+    }
+    p["mutasi"] = PB.PbDekodeBerulang(patch_bin, "2");
+    p["snapshot_mac"] = f["4"];
+    p["patch_mac"] = f["5"];
+    p["key_id"] = kosong;
+    jika tipe(f["6"]) == "teks" {
+        buat kf = PB.PbDekode(f["6"]);
+        p["key_id"] = kf["1"];
+    }
+    p["mutasi_eksternal"] = f["3"];
+    hasil p;
+}
+
+fungsi urai_mutasi(mutasi_bin) {
+    buat f = PB.PbDekode(mutasi_bin);
+    buat m = peta_baru();
+    m["op"] = 0;
+    jika tipe(f["1"]) == "angka" { m["op"] = f["1"]; }
+    m["index_blob"] = "";
+    m["value_blob"] = "";
+    m["key_id"] = "";
+    jika tipe(f["2"]) == "teks" {
+        buat rf = PB.PbDekode(f["2"]);
+        jika tipe(rf["1"]) == "teks" {
+            buat idxf = PB.PbDekode(rf["1"]);
+            jika tipe(idxf["1"]) == "teks" { m["index_blob"] = idxf["1"]; }
+        }
+        jika tipe(rf["2"]) == "teks" {
+            buat valf = PB.PbDekode(rf["2"]);
+            jika tipe(valf["1"]) == "teks" { m["value_blob"] = valf["1"]; }
+        }
+        jika tipe(rf["3"]) == "teks" {
+            buat kf = PB.PbDekode(rf["3"]);
+            jika tipe(kf["1"]) == "teks" { m["key_id"] = kf["1"]; }
+        }
+    }
+    hasil m;
+}
+
+fungsi urai_sync_action(plaintext) {
+    buat f = PB.PbDekode(plaintext);
+    buat s = peta_baru();
+    s["index_json"] = f["1"];
+    s["nilai"] = f["2"];
+    s["timestamp"] = f["3"];
+    hasil s;
+}
+
+fungsi urai_nilai_aksi(nilai_bin) {
+    jika tipe(nilai_bin) != "teks" { hasil peta_baru(); }
+    buat f = PB.PbDekode(nilai_bin);
+    buat r = peta_baru();
+    r["timestamp"] = f["1"];
+
+    jika tipe(f["2"]) == "teks" {
+        buat b = PB.PbDekode(f["2"]);
+        r["jenis"] = "bintang";
+        r["dibintangi"] = (b["1"] == 1);
+    }
+    jika tipe(f["3"]) == "teks" {
+        buat c = PB.PbDekode(f["3"]);
+        r["jenis"] = "kontak";
+        r["nama_lengkap"] = c["1"];
+        r["nama_pertama"] = c["2"];
+    }
+    jika tipe(f["4"]) == "teks" {
+        buat m = PB.PbDekode(f["4"]);
+        r["jenis"] = "bisukan";
+        r["dibisukan"] = (m["1"] == 1);
+        r["bisu_sampai"] = m["2"];
+    }
+    jika tipe(f["5"]) == "teks" {
+        buat pn = PB.PbDekode(f["5"]);
+        r["jenis"] = "pin";
+        r["disematkan"] = (pn["1"] == 1);
+    }
+    jika tipe(f["17"]) == "teks" {
+        buat a = PB.PbDekode(f["17"]);
+        r["jenis"] = "arsip";
+        r["diarsipkan"] = (a["1"] == 1);
+    }
+    jika tipe(f["14"]) == "teks" {
+        buat l = PB.PbDekode(f["14"]);
+        r["jenis"] = "label";
+        r["nama_label"] = l["1"];
+        r["warna_label"] = l["2"];
+    }
+    hasil r;
+}
+
+fungsi proses_patch(nama, patch_bin, state_hash, ambil_kunci) {
+    buat p = urai_patch(patch_bin);
+    buat kunci = ambil_kunci(p["key_id"]);
+    jika tipe(kunci) != "peta" {
+        lempar "kunci appstate " + CP["hex_encode"](ke_teks(p["key_id"])) + " belum ada";
+    }
+
+    buat hasil_mutasi = [];
+    buat ditambah = [];
+    buat dihapus = [];
+
+    untuk (buat i = 0; i < panjang(p["mutasi"]); i = i + 1) {
+        buat m = urai_mutasi(p["mutasi"][i]);
+        jika panjang(m["value_blob"]) < 32 { lanjut; }
+
+        jika m["op"] == 0 {
+            tambah(ditambah, potong(m["value_blob"], panjang(m["value_blob"]) - 32, panjang(m["value_blob"])));
+        }
+
+        coba {
+            buat dec = AK.DecodeBlob(m["op"], m["key_id"], m["value_blob"], kunci);
+            buat sa = urai_sync_action(dec["plaintext"]);
+            buat e = peta_baru();
+            e["op"] = m["op"];
+            e["index_json"] = sa["index_json"];
+            e["aksi"] = urai_nilai_aksi(sa["nilai"]);
+            e["timestamp"] = sa["timestamp"];
+            tambah(hasil_mutasi, e);
+        } tangkap (er) {
+            cetak("[APPSTATE] Mutasi #" + ke_teks(i) + " gagal didekode: " + ke_teks(er));
+        }
+    }
+
+    buat st = peta_baru();
+    st["buf"] = state_hash;
+    LT.SubtractThenAddInPlace(st, dihapus, ditambah);
+
+    buat r = peta_baru();
+    r["nama"] = nama;
+    r["versi"] = p["versi"];
+    r["hash_baru"] = st["buf"];
+    r["mutasi"] = hasil_mutasi;
+    r["snapshot_mac"] = p["snapshot_mac"];
+    hasil r;
+}
+
+fungsi HashKosong() {
+    buat s = "";
+    untuk (buat i = 0; i < 128; i = i + 1) { s = s + teks_dari(0); }
+    hasil s;
+}
+
+fungsi ringkas_mutasi(m) {
+    buat a = m["aksi"];
+    buat idx = ke_teks(m["index_json"]);
+    jika tipe(a["jenis"]) != "teks" { hasil "aksi gak dikenal " + idx; }
+    jika a["jenis"] == "bisukan" {
+        jika a["dibisukan"] { hasil "chat dibisukan " + idx; }
+        hasil "chat dibunyiin " + idx;
+    }
+    jika a["jenis"] == "arsip" {
+        jika a["diarsipkan"] { hasil "chat diarsipkan " + idx; }
+        hasil "chat dikeluarin dari arsip " + idx;
+    }
+    jika a["jenis"] == "pin" {
+        jika a["disematkan"] { hasil "chat disematkan " + idx; }
+        hasil "chat dilepas sematan " + idx;
+    }
+    jika a["jenis"] == "bintang" {
+        jika a["dibintangi"] { hasil "pesan dibintangi " + idx; }
+        hasil "bintang pesan dilepas " + idx;
+    }
+    jika a["jenis"] == "kontak" { hasil "kontak diubah: " + ke_teks(a["nama_lengkap"]); }
+    jika a["jenis"] == "label" { hasil "label: " + ke_teks(a["nama_label"]); }
+    hasil a["jenis"] + " " + idx;
+}
+
+fungsi bangun_data_mutasi(index_json, nilai_bin, versi) {
+    hasil PB.PbEnkode([
+        PB.PbBytes(1, index_json),
+        PB.PbBytes(2, nilai_bin),
+        PB.PbBytes(3, ""),
+        PB.PbVarint(4, versi)
+    ]);
+}
+
+fungsi bangun_nilai_arsip(diarsipkan, ts_ms) {
+    buat ts_detik = (ts_ms - (ts_ms % 1000)) / 1000;
+    buat rentang = PB.PbEnkode([PB.PbVarint(1, ts_detik)]);
+    buat arsip = PB.PbEnkode([PB.PbVarint(1, _bool_n(diarsipkan)), PB.PbBytes(2, rentang)]);
+    hasil PB.PbEnkode([PB.PbVarint(1, ts_ms), PB.PbBytes(17, arsip)]);
+}
+
+fungsi bangun_nilai_bintang(dibintangi, ts_ms) {
+    buat star = PB.PbEnkode([PB.PbVarint(1, _bool_n(dibintangi))]);
+    hasil PB.PbEnkode([PB.PbVarint(1, ts_ms), PB.PbBytes(2, star)]);
+}
+
+fungsi bangun_nilai_bisukan(dibisukan, bisu_sampai_ms, ts_ms) {
+    buat fields = [PB.PbVarint(1, _bool_n(dibisukan))];
+    jika dibisukan {
+        buat akhir = -1;
+        jika tipe(bisu_sampai_ms) == "angka" { akhir = bisu_sampai_ms; }
+        tambah(fields, _pb_int64(2, akhir));
+    }
+    buat mute = PB.PbEnkode(fields);
+    hasil PB.PbEnkode([PB.PbVarint(1, ts_ms), PB.PbBytes(4, mute)]);
+}
+
+fungsi bangun_nilai_label_chat(dilabeli, ts_ms) {
+    buat la = PB.PbEnkode([PB.PbVarint(1, _bool_n(dilabeli))]);
+    hasil PB.PbEnkode([PB.PbVarint(1, ts_ms), PB.PbBytes(15, la)]);
+}
+
+fungsi bangun_nilai_pin(disematkan, ts_ms) {
+    buat pin = PB.PbEnkode([PB.PbVarint(1, _bool_n(disematkan))]);
+    hasil PB.PbEnkode([PB.PbVarint(1, ts_ms), PB.PbBytes(5, pin)]);
+}
+
+fungsi bangun_patch_arsip(target_jid, diarsipkan) {
+    buat ts_ms = waktu() * 1000;
+    buat m = peta_baru();
+    m["index"] = ["archive", target_jid];
+    m["versi"] = 3;
+    m["nilai"] = bangun_nilai_arsip(diarsipkan, ts_ms);
+    buat mutasi = [m];
+    jika diarsipkan {
+        buat mp = peta_baru();
+        mp["index"] = ["pin_v1", target_jid];
+        mp["versi"] = 5;
+        mp["nilai"] = bangun_nilai_pin(salah, ts_ms);
+        tambah(mutasi, mp);
+    }
+    buat p = peta_baru();
+    p["nama"] = NAMA_REGULAR_LOW;
+    p["mutasi"] = mutasi;
+    hasil p;
+}
+
+fungsi bangun_patch_bintang(target_jid, sender_jid, msg_id, dari_saya, dibintangi) {
+    buat ts_ms = waktu() * 1000;
+    buat from_me_s = "0";
+    jika dari_saya { from_me_s = "1"; }
+    buat sender_s = "0";
+    jika tipe(sender_jid) == "teks" && panjang(sender_jid) > 0 { sender_s = sender_jid; }
+    buat m = peta_baru();
+    m["index"] = ["star", target_jid, msg_id, from_me_s, sender_s];
+    m["versi"] = 2;
+    m["nilai"] = bangun_nilai_bintang(dibintangi, ts_ms);
+    buat p = peta_baru();
+    p["nama"] = NAMA_REGULAR_HIGH;
+    p["mutasi"] = [m];
+    hasil p;
+}
+
+fungsi bangun_patch_bisukan(target_jid, dibisukan, bisu_sampai_ms) {
+    buat ts_ms = waktu() * 1000;
+    buat m = peta_baru();
+    m["index"] = ["mute", target_jid];
+    m["versi"] = 2;
+    m["nilai"] = bangun_nilai_bisukan(dibisukan, bisu_sampai_ms, ts_ms);
+    buat p = peta_baru();
+    p["nama"] = NAMA_REGULAR_HIGH;
+    p["mutasi"] = [m];
+    hasil p;
+}
+
+fungsi BangunPatchBytes(nama, mutasi_list, key_id_hex, kunci, versi_lama, hash_lama) {
+    buat key_id = CP["hex_decode"](key_id_hex);
+    buat versi_baru = versi_lama + 1;
+    buat mutation_bytes_list = [];
+    buat ditambah = [];
+
+    untuk (buat i = 0; i < panjang(mutasi_list); i = i + 1) {
+        buat m = mutasi_list[i];
+        buat index_json = json_encode(m["index"]);
+        buat content = bangun_data_mutasi(index_json, m["nilai"], m["versi"]);
+        buat blob = encode_blob(AK.OP_SET, key_id, content, kunci);
+        buat value_mac = potong(blob, panjang(blob) - 32, panjang(blob));
+        tambah(ditambah, value_mac);
+
+        buat index_mac_hex = potong(hmac_sha256_hex(kunci["index"], index_json), 0, 64);
+        buat index_mac = CP["hex_decode"](index_mac_hex);
+
+        buat record = PB.PbEnkode([
+            PB.PbBytes(1, PB.PbBytes(1, index_mac)),
+            PB.PbBytes(2, PB.PbBytes(1, blob)),
+            PB.PbBytes(3, PB.PbBytes(1, key_id))
+        ]);
+        buat mutation = PB.PbEnkode([PB.PbVarint(1, AK.OP_SET), PB.PbBytes(2, record)]);
+        tambah(mutation_bytes_list, mutation);
+    }
+
+    buat st = peta_baru();
+    st["buf"] = hash_lama;
+    LT.SubtractThenAddInPlace(st, [], ditambah);
+    buat hash_baru = st["buf"];
+
+    buat snapshot_mac = AK.GenerateSnapshotMac(hash_baru, versi_baru, nama, kunci["snapshot_mac"]);
+    buat patch_mac = AK.GeneratePatchMac(snapshot_mac, ditambah, versi_baru, nama, kunci["patch_mac"]);
+
+    buat patch_fields = [PB.PbBytes(1, PB.PbVarint(1, versi_baru))];
+    untuk (buat i = 0; i < panjang(mutation_bytes_list); i = i + 1) {
+        tambah(patch_fields, PB.PbBytes(2, mutation_bytes_list[i]));
+    }
+    tambah(patch_fields, PB.PbBytes(4, snapshot_mac));
+    tambah(patch_fields, PB.PbBytes(5, patch_mac));
+    tambah(patch_fields, PB.PbBytes(6, PB.PbBytes(1, key_id)));
+
+    buat r = peta_baru();
+    r["patch_bytes"] = PB.PbEnkode(patch_fields);
+    r["versi_baru"] = versi_baru;
+    r["hash_baru"] = hash_baru;
+    hasil r;
+}
+
+fungsi bangun_patch_label_chat(target_jid, label_id, dilabeli) {
+    buat ts_ms = waktu() * 1000;
+    buat m = peta_baru();
+    m["index"] = ["label_jid", label_id, target_jid];
+    m["versi"] = 3;
+    m["nilai"] = bangun_nilai_label_chat(dilabeli, ts_ms);
+    buat p = peta_baru();
+    p["nama"] = NAMA_REGULAR;
+    p["mutasi"] = [m];
+    hasil p;
+}
+
+fungsi bangun_patch_pin(target_jid, disematkan) {
+    buat ts_ms = waktu() * 1000;
+    buat m = peta_baru();
+    m["index"] = ["pin_v1", target_jid];
+    m["versi"] = 5;
+    m["nilai"] = bangun_nilai_pin(disematkan, ts_ms);
+    buat p = peta_baru();
+    p["nama"] = NAMA_REGULAR_LOW;
+    p["mutasi"] = [m];
+    hasil p;
+}
+
+fungsi _bool_n(b) {
+    jika b { hasil 1; }
+    hasil 0;
+}
+
+fungsi BuatIqKirimPatch(req_id, nama, patch_bytes) {
+    buat p = urai_patch(patch_bytes);
+    buat versi_lama = p["versi"] - 1;
+
+    buat ca = peta_baru();
+    ca["name"] = nama;
+    ca["version"] = ke_teks(versi_lama);
+    ca["return_snapshot"] = "false";
+
+    buat patch_node = _node("patch", peta_baru(), [], patch_bytes);
+    buat coll = _node("collection", ca, [patch_node], kosong);
+    buat sync_node = _node("sync", peta_baru(), [coll], kosong);
+
+    buat a = peta_baru();
+    a["id"] = req_id; a["to"] = _jid("", "s.whatsapp.net"); a["type"] = "set"; a["xmlns"] = "w:sync:app:state";
+    hasil _node("iq", a, [sync_node], kosong);
+}
+
+fungsi BuatIqMarkNotDirty(req_id, clean_type, ts) {
+    buat ca = peta_baru();
+    ca["type"] = clean_type;
+    ca["timestamp"] = ke_teks(ts);
+    buat clean_node = _node("clean", ca, [], kosong);
+
+    buat a = peta_baru();
+    a["id"] = req_id; a["to"] = _jid("", "s.whatsapp.net"); a["type"] = "set"; a["xmlns"] = "urn:xmpp:whatsapp:dirty";
+    hasil _node("iq", a, [clean_node], kosong);
+}
+
+fungsi encode_blob(op, key_id, plaintext, kunci) {
+    buat iv = CP["hex_decode"](CP["acak_bytes_hex"](16));
+    buat ct = CBC.CbcEnkripsi(kunci["value_enc"], iv, plaintext);
+    buat body = iv + ct;
+    buat mac = AK.GenerateContentMac(op, body, key_id, kunci["value_mac"]);
+    hasil body + mac;
+}
+
+fungsi _pb_int64(tag, val) {
+    jika val >= 0 { hasil PB.PbVarint(tag, val); }
+    jika val == -1 {
+        buat header0 = PB.PbVarint(tag, 0);
+        buat header = potong(header0, 0, panjang(header0) - 1);
+        buat ekor = "";
+        untuk (buat i = 0; i < 9; i = i + 1) { ekor = ekor + teks_dari(255); }
+        hasil header + ekor + teks_dari(1);
+    }
+    lempar "int64 negatif selain -1 belum didukung";
+}
+
+fungsi UraiResponsKirimPatch(resp) {
+    buat r = peta_baru();
+    r["ok"] = salah;
+    r["error_kode"] = 0;
+
+    buat sync = kosong;
+    jika tipe(resp["children"]) == "larik" {
+        untuk (buat i = 0; i < panjang(resp["children"]); i = i + 1) {
+            jika resp["children"][i]["tag"] == "sync" { sync = resp["children"][i]; }
+        }
+    }
+    jika tipe(sync) != "peta" { hasil r; }
+    jika tipe(sync["children"]) != "larik" { hasil r; }
+
+    untuk (buat i = 0; i < panjang(sync["children"]); i = i + 1) {
+        buat col = sync["children"][i];
+        jika col["tag"] != "collection" { lanjut; }
+        jika col["attrs"]["type"] == "error" {
+            r["ok"] = salah;
+            jika tipe(col["children"]) == "larik" {
+                untuk (buat j = 0; j < panjang(col["children"]); j = j + 1) {
+                    jika col["children"][j]["tag"] == "error" {
+                        r["error_kode"] = ke_angka(col["children"][j]["attrs"]["code"]);
+                    }
+                }
+            }
+            hasil r;
+        }
+        r["ok"] = benar;
+    }
+    hasil r;
+}

@@ -1,0 +1,23 @@
+
+fungsi baru_base_plugin(name, version, author, category, description) {
+    buat p = peta_baru();
+    p["name"] = name;
+    p["version"] = version;
+    p["author"] = author;
+    p["category"] = category;
+    p["description"] = description;
+    p["is_owner_only"] = salah;
+    p["is_hidden"] = salah;
+
+    p["GetName"] = fungsi() { hasil p["name"]; };
+    p["GetVersion"] = fungsi() { hasil p["version"]; };
+    p["GetAuthor"] = fungsi() { hasil p["author"]; };
+    p["GetCategory"] = fungsi() { hasil p["category"]; };
+    p["GetDescription"] = fungsi() { hasil p["description"]; };
+    p["IsOwnerOnly"] = fungsi() { hasil p["is_owner_only"]; };
+    p["SetOwnerOnly"] = fungsi(val) { p["is_owner_only"] = val; };
+    p["IsHidden"] = fungsi() { hasil p["is_hidden"]; };
+    p["SetHidden"] = fungsi(val) { p["is_hidden"] = val; };
+
+    hasil p;
+}

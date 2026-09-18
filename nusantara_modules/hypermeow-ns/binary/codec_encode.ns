@@ -1,0 +1,264 @@
+
+buat CP2 = muat_plugin("crypto");
+buat T2 = impor("_token_data.ns");
+buat SINGLE = T2["SINGLE"];
+buat DOUBLE = T2["DOUBLE"];
+buat _BE = muat_plugin("binary_encoder");
+
+buat _SI = peta_baru();
+untuk (buat i = 0; i < panjang(SINGLE); i = i + 1) { _SI[SINGLE[i]] = i; }
+buat _DI = peta_baru();
+untuk (buat dd = 0; dd < panjang(DOUBLE); dd = dd + 1) {
+    buat rowD = DOUBLE[dd];
+    untuk (buat ii = 0; ii < panjang(rowD); ii = ii + 1) {
+        jika tipe(_DI[rowD[ii]]) != "angka" { _DI[rowD[ii]] = dd * 100000 + ii; }
+    }
+}
+
+fungsi _w(w, b) {
+    w["pending"] = w["pending"] + teks_dari(b);
+    jika panjang(w["pending"]) >= 256 {
+        tambah(w["buf"], w["pending"]);
+        w["pending"] = "";
+    }
+}
+fungsi _w_teks(w, s) {
+    jika panjang(s) + panjang(w["pending"]) > 256 {
+        jika panjang(w["pending"]) > 0 { tambah(w["buf"], w["pending"]); w["pending"] = ""; }
+        tambah(w["buf"], s);
+    } lain {
+        w["pending"] = w["pending"] + s;
+    }
+}
+fungsi _q(v, m) {
+    buat d = v / m;
+    buat h = d - (d % 1);
+    jika h > 255 { hasil 255; }
+    hasil h;
+}
+fungsi _wint(w, v, n) {
+    buat pw = [];
+    buat p = 1;
+    untuk (buat j = 0; j < n; j = j + 1) { tambah(pw, p); p = p * 256; }
+    untuk (buat k = n - 1; k >= 0; k = k - 1) {
+        buat b = _q(v, pw[k]);
+        _w(w, b);
+        v = v - b * pw[k];
+    }
+}
+fungsi _list_start(w, size) {
+    jika size == 0 { _w(w, 0); hasil; }
+    jika size < 256 { _w(w, 248); _wint(w, size, 1); hasil; }
+    _w(w, 249);
+    _wint(w, size, 2);
+}
+fungsi _valid_nibble(s) {
+    jika panjang(s) > 127 { hasil salah; }
+    buat ok = benar;
+    untuk (buat i = 0; i < panjang(s); i = i + 1) {
+        buat c = byte_di(s, i);
+        jika c >= 48 { jika c > 57 { ok = salah; } } lain {
+            jika c != 45 { jika c != 46 { ok = salah; } }
+        }
+    }
+    hasil ok;
+}
+fungsi _valid_hex(s) {
+    jika panjang(s) > 127 { hasil salah; }
+    buat ok = benar;
+    untuk (buat i = 0; i < panjang(s); i = i + 1) {
+        buat c = byte_di(s, i);
+        jika c >= 65 {
+            jika c > 70 { ok = salah; }
+        } lain {
+            jika c < 48 { ok = salah; }
+            jika c > 57 { ok = salah; }
+        }
+    }
+    hasil ok;
+}
+fungsi _pk(mode, c) {
+    jika mode == 255 {
+        jika c == 45 { hasil 10; }
+        jika c == 46 { hasil 11; }
+        jika c == 0 { hasil 15; }
+        jika c >= 48 { jika c <= 57 { hasil c - 48; } }
+        lempar "string tak bisa dipack sebagai nibble";
+    }
+    jika c >= 48 { jika c <= 57 { hasil c - 48; } }
+    jika c >= 65 { jika c <= 70 { hasil c - 55; } }
+    jika c == 0 { hasil 15; }
+    lempar "string tak bisa dipack sebagai hex";
+}
+fungsi _packed(w, s, mode) {
+    buat L = panjang(s);
+    jika L > 127 { lempar "terlalu banyak byte untuk pack"; }
+    _w(w, mode);
+    buat rl = 0;
+    untuk (buat j = 0; j < L; j = j + 2) { rl = rl + 1; }
+    jika L % 2 == 1 { rl = rl + 128; }
+    _w(w, rl);
+    untuk (buat j2 = 0; j2 + 1 < L; j2 = j2 + 2) {
+        _w(w, _pk(mode, byte_di(s, j2)) * 16 + _pk(mode, byte_di(s, j2 + 1)));
+    }
+    jika L % 2 == 1 { _w(w, _pk(mode, byte_di(s, L - 1)) * 16 + _pk(mode, 0)); }
+}
+fungsi _byte_len(w, L) {
+    jika L < 256 { _w(w, 252); _wint(w, L, 1); hasil; }
+    jika L < 1048576 { _w(w, 253); _wint(w, L, 3); hasil; }
+    _w(w, 254);
+    _wint(w, L, 4);
+}
+fungsi _emit_bytes(w, s) {
+    _byte_len(w, panjang(s));
+    _w_teks(w, s);
+}
+fungsi _write_string(w, s) {
+    jika tipe(_SI[s]) == "angka" { _w(w, _SI[s]); hasil; }
+    jika tipe(_DI[s]) == "angka" {
+        buat kode = _DI[s];
+        buat dd = 0;
+        untuk (buat k = 1; k < 5; k = k + 1) { jika kode >= k * 100000 { dd = k; } }
+        _w(w, 236 + dd);
+        _w(w, kode - dd * 100000);
+        hasil;
+    }
+    jika _valid_nibble(s) { _packed(w, s, 255); hasil; }
+    jika _valid_hex(s) { _packed(w, s, 251); hasil; }
+    _emit_bytes(w, s);
+}
+fungsi _agent_aktual(j) {
+    buat srv = j["server"];
+    jika srv == "s.whatsapp.net" { hasil 0; }
+    jika srv == "lid" { hasil 1; }
+    jika srv == "hosted" { hasil 128; }
+    jika srv == "hosted.lid" { hasil 129; }
+    hasil j["agent"];
+}
+fungsi _write_jid(w, j) {
+    buat srv = j["server"];
+    buat dev = j["device"];
+    buat ad = salah;
+    jika srv == "hosted" { ad = benar; }
+    jika srv == "hosted.lid" { ad = benar; }
+    jika srv == "s.whatsapp.net" { jika dev > 0 { ad = benar; } }
+    jika srv == "lid" { jika dev > 0 { ad = benar; } }
+    jika ad {
+        _w(w, 247);
+        _w(w, _agent_aktual(j));
+        _w(w, dev % 256);
+        _write_string(w, j["user"]);
+        hasil;
+    }
+    jika srv == "msgr" {
+        _w(w, 246);
+        _write_string(w, j["user"]);
+        _wint(w, dev, 2);
+        _write_string(w, "msgr");
+        hasil;
+    }
+    jika srv == "interop" {
+        _w(w, 245);
+        _write_string(w, j["user"]);
+        _wint(w, dev, 2);
+        _wint(w, j["integrator"], 2);
+        _write_string(w, "interop");
+        hasil;
+    }
+    _w(w, 250);
+    jika j["user"] == "" { _w(w, 0); } lain { _write_string(w, j["user"]); }
+    _write_string(w, srv);
+}
+fungsi _count_attrs(attrs) {
+    buat n = 0;
+    buat ks = peta_kunci(attrs);
+    untuk (buat i = 0; i < panjang(ks); i = i + 1) {
+        buat v = attrs[ks[i]];
+        jika v != kosong { jika v != "" { n = n + 1; } }
+    }
+    hasil n;
+}
+fungsi _write_attrs(w, attrs) {
+    buat ks = peta_kunci(attrs);
+    untuk (buat i = 0; i < panjang(ks); i = i + 1) {
+        buat k = ks[i];
+        buat v = attrs[k];
+        jika v != kosong {
+            jika v != "" {
+                _write_string(w, k);
+                _write_val(w, v, salah);
+            }
+        }
+    }
+}
+fungsi _write_list_nodes(w, arr) {
+    untuk (buat i = 0; i < panjang(arr); i = i + 1) { _write_node(w, arr[i]); }
+}
+fungsi _write_val(w, v, sebagai_bytes) {
+    jika v == kosong { _w(w, 0); hasil; }
+    buat tp = tipe(v);
+    jika tp == "peta" {
+        jika v["jid"] == benar { _write_jid(w, v); hasil; }
+        lempar "tipe nilai tidak didukung (peta)";
+    }
+    jika tp == "larik" {
+        _list_start(w, panjang(v));
+        _write_list_nodes(w, v);
+        hasil;
+    }
+    jika tp == "boolean" {
+        jika v { _write_string(w, "true"); } lain { _write_string(w, "false"); }
+        hasil;
+    }
+    jika tp == "angka" { _write_string(w, ke_teks(v)); hasil; }
+    jika sebagai_bytes { _emit_bytes(w, v); hasil; }
+    _write_string(w, v);
+}
+fungsi _write_node(w, n) {
+    buat tag = n["tag"];
+    jika tag == "0" { _w(w, 248); _w(w, 0); hasil; }
+    buat attrs = n["attrs"];
+    buat hasC = 0;
+    jika n["ada_isi"] == benar { hasC = 1; }
+    _list_start(w, 2 * _count_attrs(attrs) + 1 + hasC);
+    _write_string(w, tag);
+    _write_attrs(w, attrs);
+    jika hasC == 0 { hasil; }
+    buat ct = n["ctipe"];
+    buat ch = n["children"];
+    jika ct == "larik" {
+        _list_start(w, panjang(ch));
+        _write_list_nodes(w, ch);
+        hasil;
+    }
+    jika ct == "jid" { _write_jid(w, n["content"]); hasil; }
+    jika ct == "teks" { _write_string(w, n["content"]); hasil; }
+    jika ct == "bytes" { _emit_bytes(w, n["content"]); hasil; }
+
+    jika tipe(ch) == "larik" {
+        jika panjang(ch) > 0 {
+            _list_start(w, panjang(ch));
+            _write_list_nodes(w, ch);
+            hasil;
+        }
+    }
+    buat c = n["content"];
+    jika c == kosong { _w(w, 0); hasil; }
+    jika tipe(c) == "peta" { _write_jid(w, c); hasil; }
+    _emit_bytes(w, c);
+}
+fungsi BcMarshal(n) {
+    hasil _BE["bc_marshal"](json_encode(n));
+}
+fungsi BcUnpack(data) {
+    jika panjang(data) == 0 { lempar "unexpected EOF"; }
+    buat flag = byte_di(data, 0);
+    buat body = potong(data, 1, panjang(data));
+    jika flag % 4 >= 2 {
+
+        buat r = jalankan_perintah("nusantara_modules/hypermeow-ns/tools/zlib_inflate", [CP2["hex_encode"](body)]);
+        jika r["status"] != 0 { lempar "Gagal zlib inflate: " + r["error"]; }
+        hasil CP2["hex_decode"](r["keluaran"]);
+    }
+    hasil body;
+}

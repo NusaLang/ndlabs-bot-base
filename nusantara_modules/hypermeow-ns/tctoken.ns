@@ -1,0 +1,147 @@
+buat JID = impor("types/jid.ns");
+
+buat TCTOKEN_DURASI_BUCKET = 604800;
+buat TCTOKEN_JUMLAH_BUCKET = 4;
+buat TCTOKEN_INTERVAL_PRUNE = 86400;
+buat TCTOKEN_MAX_ENTRI = 2048;
+
+buat _tctoken_sender_ts = peta_baru();
+buat _tctoken_urutan = [];
+buat _tctoken_bersih_terakhir = 0;
+buat _tctoken_prune_db_terakhir = 0;
+
+fungsi _tctoken_detik(t) { hasil t - (t % 1); }
+
+fungsi _tctoken_bucket(t) {
+    buat d = _tctoken_detik(t);
+    hasil (d - (d % TCTOKEN_DURASI_BUCKET)) / TCTOKEN_DURASI_BUCKET;
+}
+
+fungsi tctoken_batas_kadaluarsa() {
+    buat bucket_sekarang = _tctoken_bucket(waktu());
+    hasil (bucket_sekarang - (TCTOKEN_JUMLAH_BUCKET - 1)) * TCTOKEN_DURASI_BUCKET;
+}
+
+fungsi tctoken_kadaluarsa(ts) {
+    jika tipe(ts) != "angka" || ts == 0 { hasil benar; }
+    hasil ts < tctoken_batas_kadaluarsa();
+}
+
+fungsi tctoken_perlu_token_baru(sender_ts) {
+    jika tipe(sender_ts) != "angka" || sender_ts == 0 { hasil benar; }
+    hasil _tctoken_bucket(waktu()) > _tctoken_bucket(sender_ts);
+}
+
+fungsi tctoken_perlu_kirim_di_chat_action(j) {
+    buat n = JID.JidToNonAd(j);
+    jika n["server"] != JID.SRV_DEF && n["server"] != JID.SRV_LID { hasil salah; }
+    jika n["server"] == JID.SRV_DEF && n["user"] == "0" { hasil salah; }
+    jika JID.JidIsBot(n) { hasil salah; }
+    hasil benar;
+}
+
+fungsi tctoken_jid_penyimpanan(j, lid_untuk_pn) {
+    buat n = JID.JidToNonAd(j);
+    jika n["server"] != JID.SRV_DEF { hasil n; }
+    jika tipe(lid_untuk_pn) != "peta" { hasil n; }
+    jika JID.JidKosong(lid_untuk_pn) { hasil n; }
+    hasil JID.JidToNonAd(lid_untuk_pn);
+}
+
+fungsi _tctoken_bersihkan() {
+    jika waktu() - _tctoken_bersih_terakhir < TCTOKEN_DURASI_BUCKET { hasil salah; }
+    _tctoken_bersih_terakhir = waktu();
+    buat batas = tctoken_batas_kadaluarsa();
+    buat peta_baru_ts = peta_baru();
+    buat urutan_baru = [];
+    untuk (buat i = 0; i < panjang(_tctoken_urutan); i = i + 1) {
+        buat k = _tctoken_urutan[i];
+        buat v = _tctoken_sender_ts[k];
+        jika tipe(v) == "angka" && v >= batas {
+            peta_baru_ts[k] = v;
+            tambah(urutan_baru, k);
+        }
+    }
+    _tctoken_sender_ts = peta_baru_ts;
+    _tctoken_urutan = urutan_baru;
+    hasil benar;
+}
+
+fungsi _tctoken_taruh(kunci, ts) {
+    jika tipe(_tctoken_sender_ts[kunci]) != "angka" { tambah(_tctoken_urutan, kunci); }
+    _tctoken_sender_ts[kunci] = ts;
+    selama panjang(_tctoken_urutan) > TCTOKEN_MAX_ENTRI {
+        buat tertua = _tctoken_urutan[0];
+        _tctoken_urutan = potong(_tctoken_urutan, 1, panjang(_tctoken_urutan));
+        _tctoken_sender_ts[tertua] = kosong;
+    }
+}
+
+fungsi tctoken_ambil_sender_ts(j) {
+    buat k = JID.JidKeTeks(JID.JidToNonAd(j));
+    buat v = _tctoken_sender_ts[k];
+    jika tipe(v) != "angka" { hasil 0; }
+    hasil v;
+}
+
+fungsi tctoken_set_sender_ts(j, ts) {
+    _tctoken_bersihkan();
+    _tctoken_taruh(JID.JidKeTeks(JID.JidToNonAd(j)), ts);
+    hasil ts;
+}
+
+fungsi tctoken_validasi_set_sender_ts(j, ts_tersimpan) {
+    buat k = JID.JidKeTeks(JID.JidToNonAd(j));
+    jika tipe(_tctoken_sender_ts[k]) == "angka" { hasil benar; }
+    jika tipe(ts_tersimpan) != "angka" || ts_tersimpan == 0 { hasil salah; }
+    jika ts_tersimpan < tctoken_batas_kadaluarsa() { hasil salah; }
+    _tctoken_bersihkan();
+    _tctoken_taruh(k, ts_tersimpan);
+    hasil benar;
+}
+
+fungsi tctoken_perlu_prune_db() {
+    jika waktu() - _tctoken_prune_db_terakhir < TCTOKEN_INTERVAL_PRUNE { hasil salah; }
+    _tctoken_prune_db_terakhir = waktu();
+    hasil benar;
+}
+
+fungsi tctoken_pilih_token(existing) {
+    jika tipe(existing) != "peta" { hasil kosong; }
+    buat tok = existing["token"];
+    jika tipe(tok) != "teks" || panjang(tok) == 0 { hasil kosong; }
+    jika tctoken_kadaluarsa(existing["timestamp"]) { hasil kosong; }
+    hasil tok;
+}
+
+fungsi _tctoken_node(tag, attrs, children, content) {
+    buat n = peta_baru();
+    n["tag"] = tag;
+    jika tipe(attrs) == "peta" { n["attrs"] = attrs; } lain { n["attrs"] = peta_baru(); }
+    jika tipe(children) == "larik" { n["children"] = children; } lain { n["children"] = []; }
+    jika tipe(content) == "teks" { n["content"] = content; n["ada_isi"] = benar; }
+    lain jika panjang(n["children"]) > 0 { n["content"] = kosong; n["ada_isi"] = benar; }
+    lain { n["content"] = kosong; n["ada_isi"] = salah; }
+    hasil n;
+}
+
+fungsi tctoken_buat_node_terbitkan(req_id, j, ts) {
+    buat ta = peta_baru();
+    ta["jid"] = JID.JidToNonAd(j);
+    ta["t"] = ke_teks(_tctoken_detik(ts));
+    ta["type"] = "trusted_contact";
+
+    buat a = peta_baru();
+    a["id"] = req_id;
+    a["to"] = JID.JidBaru("", JID.SRV_DEF);
+    a["type"] = "set";
+    a["xmlns"] = "privacy";
+
+    buat token = _tctoken_node("token", ta, [], kosong);
+    buat tokens = _tctoken_node("tokens", peta_baru(), [token], kosong);
+    hasil _tctoken_node("iq", a, [tokens], kosong);
+}
+
+fungsi tctoken_buat_node_tctoken(token) {
+    hasil _tctoken_node("tctoken", peta_baru(), [], token);
+}

@@ -1,0 +1,42 @@
+buat CP   = muat_plugin("crypto");
+buat KEYS = impor("hypermeow-ns/util/keys.ns");
+
+fungsi u32_be_dari_hex(hex4) {
+    buat b = CP["hex_decode"](hex4);
+    hasil byte_di(b, 0) * 16777216 + byte_di(b, 1) * 65536 + byte_di(b, 2) * 256 + byte_di(b, 3);
+}
+
+fungsi _ambil_field(kl, nama) {
+    buat awalan = nama + "=";
+    buat idx = -1;
+    untuk (buat i = 0; i <= panjang(kl) - panjang(awalan); i = i + 1) {
+        jika potong(kl, i, i + panjang(awalan)) == awalan { idx = i; berhenti; }
+    }
+    jika idx < 0 { hasil ""; }
+    buat mulai = idx + panjang(awalan);
+    buat akhir = mulai;
+    selama akhir < panjang(kl) && kl[akhir] != "\n" && kl[akhir] != "\r" { akhir = akhir + 1; }
+    hasil potong(kl, mulai, akhir);
+}
+
+fungsi siapkan_identitas(state) {
+    jika tipe(state["identity_kp"]) == "peta" { hasil; }
+
+    buat keygen_res = jalankan_perintah("nusantara_modules/hypermeow-ns/tools/keygen_identity", []);
+    jika keygen_res["status"] != 0 { lempar "keygen_identity gagal: " + keygen_res["error"]; }
+    buat kl = keygen_res["keluaran"];
+
+    buat identity_kp = peta_baru();
+    identity_kp["pub"] = CP["hex_decode"](_ambil_field(kl, "identity_pub"));
+    identity_kp["priv"] = CP["hex_decode"](_ambil_field(kl, "identity_priv"));
+    identity_kp["signed_prekey_pub"] = CP["hex_decode"](_ambil_field(kl, "signed_prekey_pub"));
+    identity_kp["signed_prekey_sig"] = CP["hex_decode"](_ambil_field(kl, "signed_prekey_sig"));
+    identity_kp["signed_prekey_priv"] = CP["hex_decode"](_ambil_field(kl, "signed_prekey_priv"));
+    identity_kp["signed_prekey_id"] = "1";
+
+    state["identity_kp"] = identity_kp;
+    state["noise_kp"] = KEYS.KeypairBaru();
+    state["reg_id"] = u32_be_dari_hex(CP["acak_bytes_hex"](4));
+    jika tipe(state["companion_info"]) != "peta" { state["companion_info"] = peta_baru(); }
+    cetak("[PAIRING] Identity/signed-prekey/reg_id baru disiapin (reg_id=" + ke_teks(state["reg_id"]) + ")");
+}

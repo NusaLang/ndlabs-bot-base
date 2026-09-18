@@ -1,0 +1,26 @@
+
+buat _cp = muat_plugin("crypto");
+buat _ipad_const = "";
+buat _opad_const = "";
+untuk (buat i = 0; i < 128; i = i + 1) {
+    _ipad_const = _ipad_const + teks_dari(54);
+    _opad_const = _opad_const + teks_dari(92);
+}
+
+fungsi _xor(a, b) {
+    hasil _cp["hex_decode"](_cp["xor_cipher"](_cp["hex_encode"](a), _cp["hex_encode"](b)));
+}
+
+fungsi HmacSha512Hex(key, pesan) {
+    buat k = key;
+    jika panjang(k) > 128 {
+        k = _cp["hex_decode"](potong(_cp["sha512_hex"](k), 0, 128));
+    }
+    buat kp = k;
+    untuk (buat i = panjang(kp); i < 128; i = i + 1) { kp = kp + teks_dari(0); }
+    buat ipad = _xor(kp, _ipad_const);
+    buat opad = _xor(kp, _opad_const);
+
+    buat inner = _cp["hex_decode"](_cp["sha512_hex"](ipad + pesan));
+    hasil _cp["sha512_hex"](opad + inner);
+}

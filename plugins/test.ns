@@ -1,0 +1,168 @@
+buat BASE = impor("../plugin/plugin.ns");
+
+fungsi _gambar_uji(path) {
+    jika file_ada(path) { hasil benar; }
+    buat res = jalankan_perintah("convert", ["-size", "480x360", "gradient:navy-cyan",
+        "-gravity", "center", "-pointsize", "36", "-fill", "white",
+        "-annotate", "0", "ndlabs-bot", path]);
+    jika res["status"] == 0 && file_ada(path) { hasil benar; }
+    hasil salah;
+}
+
+fungsi _audio_uji(path) {
+    jika file_ada(path) { hasil benar; }
+    buat res = jalankan_perintah("ffmpeg", ["-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono",
+        "-t", "2", "-c:a", "libopus", path]);
+    jika res["status"] == 0 && file_ada(path) { hasil benar; }
+    hasil salah;
+}
+
+fungsi _video_uji(path) {
+    jika file_ada(path) { hasil benar; }
+    buat res = jalankan_perintah("ffmpeg", ["-y", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=15",
+        "-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p", path]);
+    jika res["status"] == 0 && file_ada(path) { hasil benar; }
+    hasil salah;
+}
+
+fungsi _jalan(nama, fn) {
+    coba {
+        fn();
+        cetak("[TEST] OK    -- " + nama);
+        hasil "✅ " + nama;
+    } tangkap (e) {
+        cetak("[TEST] GAGAL -- " + nama + ": " + ke_teks(e));
+        hasil "❌ " + nama + " -- " + ke_teks(e);
+    }
+}
+
+fungsi NewTestPlugin() {
+    buat p = BASE.baru_base_plugin("Test", "2.1.0", "ndlabs", "test", "Kirim contoh tiap tipe pesan buat ngetes");
+    p["SetOwnerOnly"](benar);
+    p["SetHidden"](benar);
+    p["GetCommands"] = fungsi() { hasil ["test"]; };
+    p["Execute"] = fungsi(msg, args) {
+        buat wa = msg["WA"];
+        jika tipe(wa) == "kosong" {
+            msg["Reply"]("API pengiriman belum siap.");
+            hasil "API pengiriman belum siap.";
+        }
+        jika !wa.IsGrup {
+            msg["Reply"](".test cuma jalan di grup buat sekarang.");
+            hasil ".test cuma jalan di grup.";
+        }
+
+        buat pilih = "semua";
+        jika panjang(args) > 0 && panjang(args[0]) > 0 { pilih = args[0]; }
+
+        buat lapor = [];
+        buat path = "/tmp/ndlabs-test.jpg";
+        buat path_audio = "/tmp/ndlabs-test.ogg";
+        buat path_video = "/tmp/ndlabs-test.mp4";
+
+        jika pilih == "semua" || pilih == "ext" {
+            tambah(lapor, _jalan("extendedTextMessage polos", fungsi() {
+                wa.KirimTeksExt("UJI extendedTextMessage tanpa contextInfo");
+            }));
+        }
+        jika pilih == "adnothumb" {
+            tambah(lapor, _jalan("adReply tanpa thumbnail", fungsi() {
+                wa.KirimTeksAd("UJI adReply tanpa thumbnail", "JUDUL", "sub", "", salah);
+            }));
+        }
+        jika pilih == "semua" || pilih == "reaksi" {
+            tambah(lapor, _jalan("reaksi", fungsi() { wa.KirimReaksi("🔥"); }));
+        }
+        jika pilih == "semua" || pilih == "kutip" {
+            tambah(lapor, _jalan("teks + kutipan", fungsi() {
+                wa.KirimKutip("Ini balasan yang ngutip pesan kamu.");
+            }));
+        }
+        jika pilih == "semua" || pilih == "poll" {
+            tambah(lapor, _jalan("poll", fungsi() {
+                wa.KirimPoll("Uji poll", ["Opsi A", "Opsi B", "Opsi C"], 1);
+            }));
+        }
+        jika pilih == "semua" || pilih == "gambar" {
+            tambah(lapor, _jalan("gambar + caption", fungsi() {
+                jika !_gambar_uji(path) { lempar "gagal bikin gambar uji (butuh ImageMagick 'convert')"; }
+                wa.KirimGambar(path, "Gambar uji");
+            }));
+        }
+        jika pilih == "semua" || pilih == "gambarkutip" {
+            tambah(lapor, _jalan("gambar + kutipan", fungsi() {
+                jika !_gambar_uji(path) { lempar "gagal bikin gambar uji (butuh ImageMagick 'convert')"; }
+                wa.KirimGambarKutip(path, "Gambar ini ngutip pesan kamu");
+            }));
+        }
+        jika pilih == "semua" || pilih == "audio" {
+            tambah(lapor, _jalan("audio (bukan PTT)", fungsi() {
+                jika !_audio_uji(path_audio) { lempar "gagal bikin audio uji (butuh ffmpeg)"; }
+                wa.KirimAudio(path_audio, "audio/ogg; codecs=opus", salah);
+            }));
+        }
+        jika pilih == "semua" || pilih == "ptt" {
+            tambah(lapor, _jalan("voice note (PTT)", fungsi() {
+                jika !_audio_uji(path_audio) { lempar "gagal bikin audio uji (butuh ffmpeg)"; }
+                wa.KirimAudio(path_audio, "audio/ogg; codecs=opus", benar);
+            }));
+        }
+        jika pilih == "semua" || pilih == "video" {
+            tambah(lapor, _jalan("video + caption", fungsi() {
+                jika !_video_uji(path_video) { lempar "gagal bikin video uji (butuh ffmpeg)"; }
+                wa.KirimVideo(path_video, "Video uji");
+            }));
+        }
+        jika pilih == "semua" || pilih == "lokasi" {
+            tambah(lapor, _jalan("lokasi", fungsi() {
+                wa.KirimLokasi("Kantor Uji", "Jl. Contoh No. 1", kosong);
+            }));
+        }
+        jika pilih == "semua" || pilih == "interaktif" {
+            tambah(lapor, _jalan("interaktif (native_flow, tombol URL)", fungsi() {
+                buat bt = wa.TombolUrl("Buka Website", "https://nd-labs.id");
+                wa.KirimInteraktif("UJI pesan interaktif", [bt], "Footer uji", kosong, kosong);
+            }));
+        }
+        jika pilih == "semua" || pilih == "preview" {
+            tambah(lapor, _jalan("link preview (matchedText, thumbnail upload)", fungsi() {
+                jika !_gambar_uji(path) { lempar "gagal bikin gambar uji (butuh ImageMagick 'convert')"; }
+                wa.KirimPreviewMedia("https://nd-labs.id — cek link preview", "https://nd-labs.id", "Judul Uji", "Deskripsi uji preview", path, 480, 360);
+            }));
+        }
+        jika pilih == "tombollokasi" {
+            tambah(lapor, _jalan("ButtonsMessage legacy (thumbnail mentah + tombol) -- WA modern sering nolak render", fungsi() {
+                jika !_gambar_uji(path) { lempar "gagal bikin gambar uji (butuh ImageMagick 'convert')"; }
+                buat bt = wa.TombolUrl("Buka Website", "https://nd-labs.id");
+                wa.KirimTombolLokasi("Judul Uji", "Alamat uji", "Isi pesan uji", "Footer uji", [bt], path, kosong);
+            }));
+        }
+        jika pilih == "edit" {
+            tambah(lapor, _jalan("kirim lalu edit teks", fungsi() {
+                buat id_awal = wa.KirimTeks("Pesan ini bakal diedit dalam 1 detik...");
+                jika tipe(id_awal) != "teks" || panjang(id_awal) == 0 { lempar "gak dapet id pesan buat diedit"; }
+                wa.EditTeks(id_awal, "✅ Pesan ini udah diedit lewat .test edit");
+            }));
+        }
+        jika pilih == "hapus" {
+            tambah(lapor, _jalan("kirim lalu hapus (revoke)", fungsi() {
+                buat id_awal = wa.KirimTeks("Pesan ini bakal dihapus dalam 1 detik...");
+                jika tipe(id_awal) != "teks" || panjang(id_awal) == 0 { lempar "gak dapet id pesan buat dihapus"; }
+                wa.Hapus(id_awal);
+            }));
+        }
+        jika pilih == "disappearing" {
+            tambah(lapor, _jalan("atur disappearing timer grup (86400 detik) -- ini NGUBAH SETTING GRUP BENERAN", fungsi() {
+                wa.AturDisappearing(86400);
+            }));
+        }
+
+        buat res = "🧪 *HASIL UJI*\n\n";
+        untuk (buat i = 0; i < panjang(lapor); i = i + 1) { res = res + lapor[i] + "\n"; }
+        res = res + "\nPakai: .test [ext|adnothumb|reaksi|kutip|poll|gambar|gambarkutip|audio|ptt|video|lokasi|interaktif|preview|tombollokasi|edit|hapus|disappearing|semua]";
+        res = res + "\n(tombollokasi/edit/hapus/disappearing gak masuk 'semua' -- disappearing ngubah setting grup beneran)";
+        msg["Reply"](res);
+        hasil res;
+    };
+    hasil p;
+}

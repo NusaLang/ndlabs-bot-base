@@ -1,0 +1,25 @@
+
+fungsi baru_allowed_credential() {
+    buat m = peta_baru();
+    m["id"] = ""; m["type"] = ""; m["transports"] = [];
+    hasil m;
+}
+
+fungsi baru_webauthn_public_key() {
+    buat m = peta_baru();
+    m["challenge"] = ""; m["timeout"] = 0; m["rpId"] = "";
+    m["allowCredentials"] = []; m["userVerification"] = ""; m["extensions"] = peta_baru();
+    hasil m;
+}
+
+fungsi baru_webauthn_response_data() {
+    buat m = peta_baru();
+    m["clientDataJSON"] = ""; m["authenticatorData"] = ""; m["signature"] = ""; m["userHandle"] = kosong;
+    hasil m;
+}
+
+fungsi baru_webauthn_response() {
+    buat m = peta_baru();
+    m["id"] = ""; m["rawId"] = ""; m["type"] = ""; m["response"] = baru_webauthn_response_data();
+    hasil m;
+}

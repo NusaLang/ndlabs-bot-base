@@ -1,0 +1,189 @@
+buat PB   = impor("proto/pb.ns");
+buat JID  = impor("types/jid.ns");
+buat KEYS = impor("util/keys.ns");
+buat HKDF = impor("util/hkdf.ns");
+buat GCM  = impor("util/gcm.ns");
+buat B32  = impor("util/base32.ns");
+buat CP   = muat_plugin("crypto");
+
+buat PASSKEY_INFO_HANDOFF = "shortcake-passkey-handoff-v1";
+buat PASSKEY_INFO_ENKRIPSI = "Pairing Information Encryption Key";
+buat PASSKEY_UMUR_HANDOFF = 300;
+
+fungsi _passkey_node(tag, attrs, children, content) {
+    buat n = peta_baru();
+    n["tag"] = tag;
+    jika tipe(attrs) == "peta" { n["attrs"] = attrs; } lain { n["attrs"] = peta_baru(); }
+    jika tipe(children) == "larik" { n["children"] = children; } lain { n["children"] = []; }
+    jika tipe(content) == "teks" { n["content"] = content; n["ada_isi"] = benar; }
+    lain jika panjang(n["children"]) > 0 { n["content"] = kosong; n["ada_isi"] = benar; }
+    lain { n["content"] = kosong; n["ada_isi"] = salah; }
+    hasil n;
+}
+
+fungsi _passkey_iq(req_id, tipe_iq, children) {
+    buat a = peta_baru();
+    a["id"] = req_id;
+    a["to"] = JID.JidBaru("", JID.SRV_DEF);
+    a["type"] = tipe_iq;
+    a["xmlns"] = "md";
+    hasil _passkey_node("iq", a, children, kosong);
+}
+
+fungsi _passkey_anak(node, tag) {
+    jika tipe(node) != "peta" || tipe(node["children"]) != "larik" { hasil kosong; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        jika node["children"][i]["tag"] == tag { hasil node["children"][i]; }
+    }
+    hasil kosong;
+}
+
+fungsi _passkey_sha256(data) {
+    hasil CP["hex_decode"](potong(sha256_hex(data), 0, 64));
+}
+
+fungsi _passkey_xor(a, b) {
+    hasil CP["hex_decode"](CP["xor_cipher"](CP["hex_encode"](a), CP["hex_encode"](b)));
+}
+
+fungsi passkey_kunci_handoff(adv_secret) {
+    buat k = peta_baru();
+    k["hmac"] = HKDF.HkdfSha256(adv_secret, "", PASSKEY_INFO_HANDOFF, 32);
+    k["ts"] = waktu();
+    hasil k;
+}
+
+fungsi passkey_handoff_valid(k) {
+    jika tipe(k) != "peta" || tipe(k["hmac"]) != "teks" { hasil salah; }
+    hasil (waktu() - k["ts"]) < PASSKEY_UMUR_HANDOFF;
+}
+
+fungsi passkey_adv_secret_baru() {
+    hasil CP["hex_decode"](CP["acak_bytes_hex"](32));
+}
+
+fungsi passkey_buat_node_ref(req_id) {
+    hasil _passkey_iq(req_id, "get", [_passkey_node("ref", peta_baru(), [], kosong)]);
+}
+
+fungsi passkey_urai_ref(node) {
+    buat c = _passkey_anak(node, "ref");
+    jika tipe(c) != "peta" { lempar "elemen <ref> gak ada di respons get ref"; }
+    jika tipe(c["content"]) != "teks" { lempar "isi <ref> bukan bytes"; }
+    hasil c["content"];
+}
+
+fungsi passkey_buat_node_opsi(req_id) {
+    hasil _passkey_iq(req_id, "get", [_passkey_node("passkey_request_options", peta_baru(), [], kosong)]);
+}
+
+fungsi passkey_urai_notifikasi(node) {
+    buat c = _passkey_anak(node, "passkey_request_options");
+    jika tipe(c) != "peta" { lempar "elemen <passkey_request_options> gak ada di notifikasi passkey"; }
+    jika tipe(c["content"]) != "teks" { lempar "isi <passkey_request_options> bukan bytes"; }
+    buat pk = json_decode(c["content"]);
+    jika tipe(pk) != "peta" { lempar "gagal decode isi <passkey_request_options>"; }
+    hasil pk;
+}
+
+fungsi passkey_notifikasi_dari_server(node) {
+    buat dari = node["attrs"]["from"];
+    jika tipe(dari) != "peta" { hasil salah; }
+    hasil panjang(dari["user"]) == 0 && dari["server"] == JID.SRV_DEF;
+}
+
+fungsi passkey_buat_cache(companion_ref, tipe_perangkat) {
+    buat kp = KEYS.KeypairBaru();
+    buat nonce = CP["hex_decode"](CP["acak_bytes_hex"](32));
+    buat dt = 0;
+    jika tipe(tipe_perangkat) == "angka" { dt = tipe_perangkat; }
+
+    buat ident = PB.PbEnkode([PB.PbBytes(1, kp["pub"]), PB.PbVarint(2, dt), PB.PbBytes(3, companion_ref)]);
+    buat komitmen = PB.PbEnkode([PB.PbBytes(1, _passkey_sha256(ident + nonce))]);
+    buat prologue = PB.PbEnkode([PB.PbBytes(1, ident), PB.PbBytes(2, komitmen)]);
+
+    buat c = peta_baru();
+    c["keypair"] = kp;
+    c["companion_nonce"] = nonce;
+    c["pairing_ref"] = companion_ref;
+    c["device_type"] = dt;
+    c["ident"] = ident;
+    c["prologue_payload"] = prologue;
+    c["encryption_key"] = kosong;
+    hasil c;
+}
+
+fungsi passkey_proof_handoff(kunci_handoff, prologue_payload) {
+    hasil CP["hex_decode"](potong(hmac_sha256_hex(kunci_handoff["hmac"], prologue_payload), 0, 64));
+}
+
+fungsi passkey_buat_node_prologue(req_id, raw_id, webauthn_json, cache, kunci_handoff) {
+    buat isi = [];
+    tambah(isi, _passkey_node("credential_id", peta_baru(), [], raw_id));
+    tambah(isi, _passkey_node("webauthn_assertion", peta_baru(), [], webauthn_json));
+    tambah(isi, _passkey_node("prologue_payload", peta_baru(), [], cache["prologue_payload"]));
+
+    buat skip_ux = salah;
+    jika passkey_handoff_valid(kunci_handoff) {
+        buat proof = passkey_proof_handoff(kunci_handoff, cache["prologue_payload"]);
+        tambah(isi, _passkey_node("pairing_handoff_proof", peta_baru(), [], proof));
+        skip_ux = benar;
+    }
+
+    buat r = peta_baru();
+    r["node"] = _passkey_iq(req_id, "set", [_passkey_node("passkey_prologue", peta_baru(), isi, kosong)]);
+    r["skip_handoff_ux"] = skip_ux;
+    hasil r;
+}
+
+fungsi passkey_buat_node_companion_nonce(req_id, nonce) {
+    hasil _passkey_iq(req_id, "set", [_passkey_node("companion_nonce", peta_baru(), [], nonce)]);
+}
+
+fungsi passkey_urai_lanjutan(node) {
+    buat c = _passkey_anak(node, "primary_ephemeral_identity");
+    jika tipe(c) != "peta" { lempar "elemen <primary_ephemeral_identity> gak ada di notifikasi lanjutan passkey"; }
+    jika tipe(c["content"]) != "teks" { lempar "isi <primary_ephemeral_identity> bukan bytes"; }
+    buat f = PB.PbDekode(c["content"]);
+    buat r = peta_baru();
+    r["public_key"] = f["1"];
+    r["nonce"] = f["2"];
+    jika tipe(r["public_key"]) != "teks" || panjang(r["public_key"]) != 32 {
+        lempar "panjang public key primary ephemeral identity gak sesuai";
+    }
+    jika tipe(r["nonce"]) != "teks" || panjang(r["nonce"]) != 32 {
+        lempar "panjang nonce primary ephemeral identity gak sesuai";
+    }
+    hasil r;
+}
+
+fungsi passkey_proses_lanjutan(cache, primary) {
+    jika tipe(cache) != "peta" { lempar "notifikasi lanjutan passkey datang tanpa cache linking"; }
+    buat shared = CP["hex_decode"](CP["x25519"](CP["hex_encode"](cache["keypair"]["priv"]),
+                                                CP["hex_encode"](primary["public_key"])));
+    buat salt = "Companion Pairing " + ke_teks(cache["device_type"]) + " with ref " + cache["pairing_ref"];
+    cache["encryption_key"] = HKDF.HkdfSha256(shared, salt, PASSKEY_INFO_ENKRIPSI, 32);
+
+    buat digest = _passkey_sha256(cache["companion_nonce"] + primary["public_key"]);
+    buat kode_bytes = _passkey_xor(potong(primary["nonce"], 0, 5), potong(digest, 0, 5));
+    buat kode = B32.EnkodeBase325byte(kode_bytes);
+
+    buat r = peta_baru();
+    r["encryption_key"] = cache["encryption_key"];
+    r["kode"] = potong(kode, 0, 4) + "-" + potong(kode, 4, 8);
+    hasil r;
+}
+
+fungsi passkey_bangun_pairing_request(cache, noise_pub, identity_pub, adv_secret) {
+    jika tipe(cache) != "peta" { lempar "gak ada cache linking passkey"; }
+    jika tipe(cache["encryption_key"]) != "teks" { lempar "cache linking passkey belum punya encryption key"; }
+
+    buat req = PB.PbEnkode([PB.PbBytes(1, noise_pub), PB.PbBytes(2, identity_pub), PB.PbBytes(3, adv_secret)]);
+    buat iv = CP["hex_decode"](CP["acak_bytes_hex"](12));
+    buat e = GCM.GcmEnkripsi(cache["encryption_key"], iv, req, "");
+    hasil PB.PbEnkode([PB.PbBytes(1, e["ct"] + e["tag"]), PB.PbBytes(2, iv)]);
+}
+
+fungsi passkey_buat_node_pairing_request(req_id, wrapped) {
+    hasil _passkey_iq(req_id, "set", [_passkey_node("encrypted_pairing_request", peta_baru(), [], wrapped)]);
+}

@@ -1,0 +1,27 @@
+
+fungsi baru_variant_info() {
+    buat m = peta_baru();
+    m["properties"] = "";
+    hasil m;
+}
+
+fungsi baru_order_price() {
+    buat m = peta_baru();
+    m["subtotal"] = 0; m["total"] = 0; m["currency"] = ""; m["price_status"] = "";
+    hasil m;
+}
+
+fungsi baru_order_product() {
+    buat m = peta_baru();
+    m["id"] = ""; m["image_id"] = ""; m["image_url"] = "";
+    m["price"] = 0; m["currency"] = ""; m["name"] = ""; m["quantity"] = 0;
+    m["variant_info"] = baru_variant_info();
+    hasil m;
+}
+
+fungsi baru_order_details() {
+    buat m = peta_baru();
+    m["id"] = ""; m["created_at"] = 0; m["catalog_id"] = "";
+    m["price"] = baru_order_price(); m["products"] = [];
+    hasil m;
+}

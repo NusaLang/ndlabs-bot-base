@@ -1,0 +1,228 @@
+buat Q_INFO       = "6563316087068696";
+buat Q_LANGGANAN  = "6388546374527196";
+buat Q_SUBSCRIBER = "9800646650009898";
+buat M_IKUTI      = "9926858900719341";
+buat M_BERHENTI   = "6392786840836363";
+buat M_BISUKAN    = "6274038279359549";
+buat M_BUNYIKAN   = "6068417879924485";
+buat M_BUAT       = "6234210096708695";
+buat M_UBAH       = "7150902998257522";
+buat M_HAPUS      = "30062808666639665";
+
+fungsi _jid(usr, srv) {
+    buat j = peta_baru();
+    j["jid"] = benar; j["user"] = usr; j["server"] = srv; j["device"] = 0; j["agent"] = 0;
+    hasil j;
+}
+
+fungsi _node(tag, attrs, children, content) {
+    buat n = peta_baru();
+    n["tag"] = tag;
+    jika tipe(attrs) == "peta" { n["attrs"] = attrs; } lain { n["attrs"] = peta_baru(); }
+    jika tipe(children) == "larik" { n["children"] = children; } lain { n["children"] = []; }
+    jika tipe(content) == "teks" { n["content"] = content; n["ada_isi"] = benar; }
+    lain jika panjang(n["children"]) > 0 { n["content"] = kosong; n["ada_isi"] = benar; }
+    lain { n["content"] = kosong; n["ada_isi"] = salah; }
+    hasil n;
+}
+
+fungsi buat_node_mex(req_id, query_id, variables_json) {
+    buat qa = peta_baru(); qa["query_id"] = query_id;
+    buat payload = "{\"variables\":" + variables_json + "}";
+    buat a = peta_baru();
+    a["id"] = req_id; a["to"] = _jid("", "s.whatsapp.net"); a["type"] = "get"; a["xmlns"] = "w:mex";
+    hasil _node("iq", a, [_node("query", qa, [], payload)], kosong);
+}
+
+fungsi buat_node_info_newsletter(req_id, channel_jid_teks) {
+    buat v = "{\"fetch_viewer_metadata\":true,\"input\":{\"key\":\"" + channel_jid_teks + "\",\"type\":\"JID\"}}";
+    hasil buat_node_mex(req_id, Q_INFO, v);
+}
+
+fungsi buat_node_info_newsletter_undangan(req_id, kode) {
+    buat v = "{\"fetch_viewer_metadata\":false,\"input\":{\"key\":\"" + kode + "\",\"type\":\"INVITE\"}}";
+    hasil buat_node_mex(req_id, Q_INFO, v);
+}
+
+fungsi buat_node_daftar_langganan(req_id) {
+    hasil buat_node_mex(req_id, Q_LANGGANAN, "{}");
+}
+
+fungsi buat_node_ikuti_newsletter(req_id, channel_jid_teks) {
+    hasil buat_node_mex(req_id, M_IKUTI, "{\"newsletter_id\":\"" + channel_jid_teks + "\"}");
+}
+
+fungsi buat_node_berhenti_newsletter(req_id, channel_jid_teks) {
+    hasil buat_node_mex(req_id, M_BERHENTI, "{\"newsletter_id\":\"" + channel_jid_teks + "\"}");
+}
+
+fungsi buat_node_bisukan_newsletter(req_id, channel_jid_teks, bisu) {
+    buat q = M_BUNYIKAN;
+    jika bisu { q = M_BISUKAN; }
+    hasil buat_node_mex(req_id, q, "{\"newsletter_id\":\"" + channel_jid_teks + "\"}");
+}
+
+fungsi buat_node_buat_newsletter(req_id, nama, deskripsi) {
+    buat v = "{\"input\":{\"name\":\"" + nama + "\",\"description\":\"" + deskripsi + "\"}}";
+    hasil buat_node_mex(req_id, M_BUAT, v);
+}
+
+fungsi buat_node_hapus_newsletter(req_id, channel_jid_teks) {
+    hasil buat_node_mex(req_id, M_HAPUS, "{\"newsletter_id\":\"" + channel_jid_teks + "\"}");
+}
+
+fungsi buat_node_tandai_dibaca(req_id, channel_jid, server_id_list) {
+    buat items = [];
+    untuk (buat i = 0; i < panjang(server_id_list); i = i + 1) {
+        buat ia = peta_baru(); ia["server_id"] = server_id_list[i];
+        tambah(items, _node("item", ia, [], kosong));
+    }
+    buat a = peta_baru();
+    a["id"] = req_id; a["to"] = channel_jid; a["type"] = "get"; a["xmlns"] = "newsletter";
+    hasil _node("iq", a, [_node("live_updates", peta_baru(), items, kosong)], kosong);
+}
+
+fungsi buat_node_reaksi_newsletter(msg_id, channel_jid, server_id, emoji) {
+    buat ra = peta_baru();
+    buat ma = peta_baru();
+    ma["to"] = channel_jid; ma["id"] = msg_id; ma["server_id"] = server_id; ma["type"] = "reaction";
+    jika tipe(emoji) == "teks" && panjang(emoji) > 0 {
+        ra["code"] = emoji;
+    } lain {
+        ma["edit"] = "7";
+    }
+    hasil _node("message", ma, [_node("reaction", ra, [], kosong)], kosong);
+}
+
+fungsi urai_respons_mex(node) {
+    buat r = peta_baru(); r["ok"] = salah; r["data"] = "";
+    jika tipe(node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        jika node["children"][i]["tag"] == "result" {
+            r["ok"] = benar;
+            r["data"] = node["children"][i]["content"];
+            hasil r;
+        }
+    }
+    hasil r;
+}
+
+fungsi buat_node_langganan_live_update(req_id, channel_jid) {
+    buat a = peta_baru();
+    a["id"] = req_id; a["to"] = channel_jid; a["type"] = "set"; a["xmlns"] = "newsletter";
+    hasil _node("iq", a, [_node("live_updates", peta_baru(), [], kosong)], kosong);
+}
+
+fungsi buat_node_pembaruan_pesan_newsletter(req_id, channel_jid, jumlah, sejak_unix, setelah_id) {
+    buat ma = peta_baru();
+    jika tipe(jumlah) == "angka" && jumlah != 0 { ma["count"] = ke_teks(jumlah); }
+    jika tipe(sejak_unix) == "angka" && sejak_unix != 0 { ma["since"] = ke_teks(sejak_unix); }
+    jika tipe(setelah_id) == "angka" && setelah_id != 0 { ma["after"] = ke_teks(setelah_id); }
+    buat a = peta_baru();
+    a["id"] = req_id; a["to"] = channel_jid; a["type"] = "get"; a["xmlns"] = "newsletter";
+    hasil _node("iq", a, [_node("message_updates", ma, [], kosong)], kosong);
+}
+
+fungsi buat_node_pesan_newsletter(req_id, channel_jid, jumlah, sebelum_id) {
+    buat ma = peta_baru();
+    ma["type"] = "jid"; ma["jid"] = channel_jid;
+    jika tipe(jumlah) == "angka" && jumlah != 0 { ma["count"] = ke_teks(jumlah); }
+    jika tipe(sebelum_id) == "angka" && sebelum_id != 0 { ma["before"] = ke_teks(sebelum_id); }
+    buat a = peta_baru();
+    a["id"] = req_id; a["to"] = _jid("", "s.whatsapp.net"); a["type"] = "get"; a["xmlns"] = "newsletter";
+    hasil _node("iq", a, [_node("messages", ma, [], kosong)], kosong);
+}
+
+fungsi buat_node_terima_tos(req_id, notice_id, tahap) {
+    buat na = peta_baru(); na["id"] = notice_id; na["stage"] = tahap;
+    buat a = peta_baru();
+    a["id"] = req_id; a["to"] = _jid("", "s.whatsapp.net"); a["type"] = "set"; a["xmlns"] = "tos";
+    hasil _node("iq", a, [_node("notice", na, [], kosong)], kosong);
+}
+
+fungsi _urai_daftar_pesan_newsletter(messages_node) {
+    buat daftar = [];
+    jika tipe(messages_node["children"]) != "larik" { hasil daftar; }
+    untuk (buat i = 0; i < panjang(messages_node["children"]); i = i + 1) {
+        buat m = messages_node["children"][i];
+        jika m["tag"] != "message" { lanjut; }
+        buat e = peta_baru();
+        e["server_id"] = 0;
+        jika tipe(m["attrs"]["server_id"]) == "teks" {
+            coba { e["server_id"] = ke_angka(m["attrs"]["server_id"]); } tangkap (err) {}
+        }
+        e["id"] = m["attrs"]["id"];
+        e["tipe"] = m["attrs"]["type"];
+        e["waktu"] = m["attrs"]["t"];
+        e["jumlah_view"] = 0;
+        e["reaksi"] = peta_baru();
+        e["pesan_wire"] = kosong;
+        jika tipe(m["children"]) == "larik" {
+            untuk (buat c = 0; c < panjang(m["children"]); c = c + 1) {
+                buat sc = m["children"][c];
+                jika sc["tag"] == "plaintext" && tipe(sc["content"]) == "teks" { e["pesan_wire"] = sc["content"]; }
+                jika sc["tag"] == "views_count" && tipe(sc["attrs"]["count"]) == "teks" {
+                    coba { e["jumlah_view"] = ke_angka(sc["attrs"]["count"]); } tangkap (err) {}
+                }
+                jika sc["tag"] == "reactions" && tipe(sc["children"]) == "larik" {
+                    untuk (buat rc = 0; rc < panjang(sc["children"]); rc = rc + 1) {
+                        buat rn = sc["children"][rc];
+                        jika rn["tag"] != "reaction" { lanjut; }
+                        buat jml = 0;
+                        jika tipe(rn["attrs"]["count"]) == "teks" {
+                            coba { jml = ke_angka(rn["attrs"]["count"]); } tangkap (err) {}
+                        }
+                        e["reaksi"][rn["attrs"]["code"]] = jml;
+                    }
+                }
+            }
+        }
+        tambah(daftar, e);
+    }
+    hasil daftar;
+}
+
+fungsi urai_respons_langganan_live_update(node) {
+    buat r = peta_baru(); r["ok"] = salah; r["durasi_detik"] = 0;
+    jika tipe(node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        jika node["children"][i]["tag"] == "live_updates" {
+            r["ok"] = benar;
+            jika tipe(node["children"][i]["attrs"]["duration"]) == "teks" {
+                coba { r["durasi_detik"] = ke_angka(node["children"][i]["attrs"]["duration"]); } tangkap (err) {}
+            }
+            hasil r;
+        }
+    }
+    hasil r;
+}
+
+fungsi urai_respons_pembaruan_pesan_newsletter(node) {
+    buat r = peta_baru(); r["ok"] = salah; r["pesan"] = [];
+    jika tipe(node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        jika node["children"][i]["tag"] != "message_updates" { lanjut; }
+        jika tipe(node["children"][i]["children"]) != "larik" { lanjut; }
+        untuk (buat j = 0; j < panjang(node["children"][i]["children"]); j = j + 1) {
+            jika node["children"][i]["children"][j]["tag"] == "messages" {
+                r["ok"] = benar;
+                r["pesan"] = _urai_daftar_pesan_newsletter(node["children"][i]["children"][j]);
+                hasil r;
+            }
+        }
+    }
+    hasil r;
+}
+
+fungsi urai_respons_pesan_newsletter(node) {
+    buat r = peta_baru(); r["ok"] = salah; r["pesan"] = [];
+    jika tipe(node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        jika node["children"][i]["tag"] == "messages" {
+            r["ok"] = benar;
+            r["pesan"] = _urai_daftar_pesan_newsletter(node["children"][i]);
+            hasil r;
+        }
+    }
+    hasil r;
+}

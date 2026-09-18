@@ -1,0 +1,156 @@
+fungsi _jid(usr, srv) {
+    buat j = peta_baru();
+    j["jid"] = benar; j["user"] = usr; j["server"] = srv; j["device"] = 0; j["agent"] = 0;
+    hasil j;
+}
+
+fungsi _node(tag, attrs, children, content) {
+    buat n = peta_baru();
+    n["tag"] = tag;
+    jika tipe(attrs) == "peta" { n["attrs"] = attrs; } lain { n["attrs"] = peta_baru(); }
+    jika tipe(children) == "larik" { n["children"] = children; } lain { n["children"] = []; }
+    jika tipe(content) == "teks" { n["content"] = content; n["ada_isi"] = benar; }
+    lain jika panjang(n["children"]) > 0 { n["content"] = kosong; n["ada_isi"] = benar; }
+    lain { n["content"] = kosong; n["ada_isi"] = salah; }
+    hasil n;
+}
+
+fungsi buat_node_privasi_status(req_id) {
+    buat a = peta_baru();
+    a["id"] = req_id; a["to"] = _jid("", "s.whatsapp.net"); a["type"] = "get"; a["xmlns"] = "status";
+    hasil _node("iq", a, [_node("privacy", peta_baru(), [], kosong)], kosong);
+}
+
+fungsi urai_privasi_status(node) {
+    buat r = peta_baru(); r["ok"] = salah; r["daftar"] = [];
+    jika tipe(node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        buat p = node["children"][i];
+        jika p["tag"] != "privacy" || tipe(p["children"]) != "larik" { lanjut; }
+        untuk (buat j = 0; j < panjang(p["children"]); j = j + 1) {
+            buat l = p["children"][j];
+            jika l["tag"] != "list" { lanjut; }
+            buat e = peta_baru();
+            e["tipe"] = l["attrs"]["type"];
+            e["bawaan"] = (l["attrs"]["default"] == "true");
+            e["jid"] = [];
+            jika tipe(l["children"]) == "larik" {
+                untuk (buat u = 0; u < panjang(l["children"]); u = u + 1) {
+                    jika l["children"][u]["tag"] == "user" {
+                        tambah(e["jid"], l["children"][u]["attrs"]["jid"]);
+                    }
+                }
+            }
+            tambah(r["daftar"], e);
+        }
+        r["ok"] = benar;
+    }
+    hasil r;
+}
+
+fungsi buat_node_daftar_broadcast(req_id, list_jid) {
+    buat a = peta_baru();
+    a["id"] = req_id; a["to"] = list_jid; a["type"] = "get"; a["xmlns"] = "w:g2";
+    hasil _node("iq", a, [_node("query", peta_baru(), [], kosong)], kosong);
+}
+
+fungsi urai_daftar_broadcast(node) {
+    buat r = peta_baru(); r["ok"] = salah; r["anggota"] = [];
+    jika tipe(node["children"]) != "larik" { hasil r; }
+    untuk (buat i = 0; i < panjang(node["children"]); i = i + 1) {
+        buat l = node["children"][i];
+        jika l["tag"] != "list" || tipe(l["children"]) != "larik" { lanjut; }
+        r["nama"] = l["attrs"]["name"];
+        untuk (buat j = 0; j < panjang(l["children"]); j = j + 1) {
+            jika l["children"][j]["tag"] == "participant" {
+                tambah(r["anggota"], l["children"][j]["attrs"]["jid"]);
+            }
+        }
+        r["ok"] = benar;
+    }
+    hasil r;
+}
+
+fungsi _jid_teks(v) {
+    jika tipe(v) == "teks" { hasil v; }
+    jika tipe(v) != "peta" { hasil ""; }
+    hasil v["user"] + "@" + v["server"];
+}
+
+fungsi penerima_broadcast_status(privasi, kontak) {
+    jika tipe(privasi) != "peta" { lempar "setelan privasi status gak valid"; }
+    jika privasi["tipe"] == PRIVASI_WHITELIST {
+        jika tipe(privasi["jid"]) != "larik" { hasil []; }
+        hasil privasi["jid"];
+    }
+
+    buat blacklist = peta_baru();
+    jika privasi["tipe"] == PRIVASI_BLACKLIST && tipe(privasi["jid"]) == "larik" {
+        untuk (buat i = 0; i < panjang(privasi["jid"]); i = i + 1) {
+            blacklist[_jid_teks(privasi["jid"][i])] = benar;
+        }
+    }
+
+    buat out = [];
+    jika tipe(kontak) != "larik" { hasil out; }
+    untuk (buat i = 0; i < panjang(kontak); i = i + 1) {
+        buat k = kontak[i];
+        buat kt = _jid_teks(k["jid"]);
+        jika blacklist[kt] == benar { lanjut; }
+        buat nama = k["nama_lengkap"];
+        jika tipe(nama) != "teks" || panjang(nama) == 0 { lanjut; }
+        tambah(out, k["jid"]);
+    }
+    hasil out;
+}
+
+fungsi peserta_daftar_broadcast(jid_broadcast, penerima, jid_kita) {
+    jika _jid_teks(jid_broadcast) != JID_BROADCAST_STATUS {
+        lempar "belum didukung: daftar broadcast selain status@broadcast gak dilayani server";
+    }
+    jika tipe(jid_kita) != "peta" && tipe(jid_kita) != "teks" { lempar "belum login"; }
+    buat user_kita = jid_kita;
+    jika tipe(jid_kita) == "peta" { user_kita = jid_kita["user"]; }
+    jika panjang(user_kita) == 0 { lempar "belum login"; }
+
+    buat out = [];
+    buat ada_kita = salah;
+    untuk (buat i = 0; i < panjang(penerima); i = i + 1) {
+        buat p = penerima[i];
+        buat pu = p;
+        jika tipe(p) == "peta" { pu = p["user"]; }
+        jika pu == user_kita { ada_kita = benar; }
+        tambah(out, p);
+    }
+    jika ada_kita == salah { tambah(out, jid_kita); }
+    hasil out;
+}
+
+fungsi privasi_status_bawaan() {
+    buat e = peta_baru();
+    e["tipe"] = PRIVASI_KONTAK;
+    e["bawaan"] = benar;
+    e["jid"] = [];
+    hasil [e];
+}
+
+fungsi urai_privasi_status_lengkap(node) {
+    buat p = urai_privasi_status(node);
+    buat r = peta_baru();
+    r["ok"] = p["ok"];
+    r["daftar"] = urutkan_privasi_status(p["daftar"]);
+    hasil r;
+}
+
+fungsi urutkan_privasi_status(daftar) {
+    jika tipe(daftar) != "larik" || panjang(daftar) == 0 { hasil privasi_status_bawaan(); }
+    buat out = [];
+    untuk (buat i = 0; i < panjang(daftar); i = i + 1) {
+        jika daftar[i]["bawaan"] == benar { tambah(out, daftar[i]); }
+    }
+    jika panjang(out) == 0 { tambah(out, daftar[0]); }
+    untuk (buat i = 0; i < panjang(daftar); i = i + 1) {
+        jika daftar[i] != out[0] { tambah(out, daftar[i]); }
+    }
+    hasil out;
+}

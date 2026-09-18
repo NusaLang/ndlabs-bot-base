@@ -1,0 +1,75 @@
+
+buat JID = impor("../nusantara_modules/hypermeow-ns/types/jid.ns");
+buat DB  = impor("../database/db.ns");
+
+buat BOT_NUM   = ambil_env("BOT_NUMBER", "");
+buat BOT_JID   = BOT_NUM + "@s.whatsapp.net";
+buat BOT_LID   = BOT_NUM + "@lid";
+
+buat OWNER_NUM = ambil_env("OWNER_NUMBER", "");
+buat OWNER_JID = OWNER_NUM + "@s.whatsapp.net";
+buat OWNER_LID = OWNER_NUM + "@lid";
+
+buat GRUP_USER_DIBISUKAN = ambil_env("GRUP_DIBISUKAN", "");
+buat JID_DIBISUKAN = [];
+jika panjang(GRUP_USER_DIBISUKAN) > 0 { JID_DIBISUKAN = [GRUP_USER_DIBISUKAN + "@g.us"]; }
+
+fungsi IsDibisukan(chat_jid) {
+    untuk (buat i = 0; i < panjang(JID_DIBISUKAN); i = i + 1) {
+        jika JID_DIBISUKAN[i] == chat_jid { hasil benar; }
+    }
+    hasil salah;
+}
+
+fungsi FormatUserJID(user_num) {
+    hasil JID.buat_jid(user_num, JID.wa_user_server);
+}
+
+fungsi FormatGroupJID(group_num) {
+    hasil JID.buat_jid(group_num, JID.wa_group_server);
+}
+
+fungsi CleanPhoneNumber(num) {
+    buat res = "";
+    untuk (buat i = 0; i < panjang(num); i = i + 1) {
+        buat b = byte_di(num, i);
+        jika b >= 48 && b <= 57 {
+            res = res + teks_dari(b);
+        }
+    }
+    jika panjang(res) > 0 && potong(res, 0, 1) == "0" {
+        res = "62" + potong(res, 1, panjang(res));
+    }
+    hasil res;
+}
+
+fungsi IsOwner(sender_jid, from_me) {
+    jika from_me == benar { hasil benar; }
+    jika tipe(sender_jid) != "teks" || panjang(sender_jid) == 0 { hasil salah; }
+    jika sender_jid == OWNER_JID || sender_jid == OWNER_LID { hasil benar; }
+    jika sender_jid == BOT_JID || sender_jid == BOT_LID { hasil benar; }
+
+    buat clean = CleanPhoneNumber(sender_jid);
+    jika clean == OWNER_NUM || clean == BOT_NUM { hasil benar; }
+
+    buat resolved = DB.LIDKeJID(sender_jid);
+    jika resolved == OWNER_JID || resolved == BOT_JID { hasil benar; }
+
+    hasil salah;
+}
+
+fungsi LIDKeJID(lid) {
+    jika lid == OWNER_LID { hasil OWNER_JID; }
+    jika lid == BOT_LID { hasil BOT_JID; }
+    buat res = DB.LIDKeJID(lid);
+    jika panjang(res) > 0 { hasil res; }
+    hasil lid;
+}
+
+fungsi JIDKeLID(jid) {
+    jika jid == OWNER_JID { hasil OWNER_LID; }
+    jika jid == BOT_JID { hasil BOT_LID; }
+    buat res = DB.JIDKeLID(jid);
+    jika panjang(res) > 0 { hasil res; }
+    hasil jid;
+}
