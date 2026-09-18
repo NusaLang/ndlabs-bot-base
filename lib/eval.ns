@@ -1,5 +1,5 @@
 buat CP = muat_plugin("crypto");
-buat PB = impor("../nusantara_modules/hypermeow-ns/proto/pb.ns");
+buat PB = impor("../nusantara_modules/UwUchan/proto/pb.ns");
 
 fungsi _eval_ext(md) {
     jika tipe(md) != "peta" || tipe(md["mimetype"]) != "teks" { hasil "bin"; }
@@ -295,7 +295,7 @@ fungsi _bungkus_m_teks() {
 
 fungsi jalankan_eval(kode, m) {
     buat m_json = _json_aman(m);
-    buat prelude = "buat PB = impor(\"nusantara_modules/hypermeow-ns/proto/pb.ns\");\n"
+    buat prelude = "buat PB = impor(\"nusantara_modules/UwUchan/proto/pb.ns\");\n"
         + "fungsi RAPI(v) { hasil PB.pb_js_inspect(v, 0); }\n"
         + _M_BENTUK
         + "buat _m_mentah = json_decode(" + json_encode(m_json) + ");\n"

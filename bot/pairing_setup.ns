@@ -1,5 +1,5 @@
 buat CP   = muat_plugin("crypto");
-buat KEYS = impor("hypermeow-ns/util/keys.ns");
+buat KEYS = impor("UwUchan/util/keys.ns");
 
 fungsi u32_be_dari_hex(hex4) {
     buat b = CP["hex_decode"](hex4);
@@ -22,7 +22,7 @@ fungsi _ambil_field(kl, nama) {
 fungsi siapkan_identitas(state) {
     jika tipe(state["identity_kp"]) == "peta" { hasil; }
 
-    buat keygen_res = jalankan_perintah("nusantara_modules/hypermeow-ns/tools/keygen_identity", []);
+    buat keygen_res = jalankan_perintah("nusantara_modules/UwUchan/tools/keygen_identity", []);
     jika keygen_res["status"] != 0 { lempar "keygen_identity gagal: " + keygen_res["error"]; }
     buat kl = keygen_res["keluaran"];
 

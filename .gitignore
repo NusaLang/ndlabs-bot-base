@@ -39,3 +39,5 @@ config.env
 credentials.json
 device_*.json
 .history/
+nusantara_modules/
+.nusa-cache/

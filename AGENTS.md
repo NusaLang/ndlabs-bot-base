@@ -1,6 +1,6 @@
 # ndlabs-bot — panduan buat AI agent / kontributor
 
-Self-bot WhatsApp ditulis di Nusantara (`.ns`), jalan di atas modul protokol WhatsApp+Signal custom (`nusantara_modules/hypermeow-ns`) — bukan whatsmeow/Baileys/wa-js. Dokumen ini buat siapa aja (manusia atau AI agent) yang mau nambah/ubah fitur di repo ini, atau bikin bot lain yang pakai `hypermeow-ns` sebagai modul protokol.
+Self-bot WhatsApp ditulis di Nusantara (`.ns`), jalan di atas modul protokol WhatsApp+Signal custom (`nusantara_modules/UwUchan`) — bukan whatsmeow/Baileys/wa-js. Dokumen ini buat siapa aja (manusia atau AI agent) yang mau nambah/ubah fitur di repo ini, atau bikin bot lain yang pakai `UwUchan` sebagai modul protokol.
 
 ## Arsitektur singkat
 
@@ -12,7 +12,7 @@ main.ns / .main.ns   -> entry point, load session, konek WS, import semua modul
     plugin/manager.ns -> registry semua plugin (Register/GetCommand/GetAll)
     plugin/menu.ns    -> render .menu (list+tombol interaktif)
     plugins/*.ns      -> satu file = satu/beberapa command
-  nusantara_modules/hypermeow-ns/
+  nusantara_modules/UwUchan/
     client.ns         -> WA protocol client: connect, decrypt, kirim_*_grup, buat_api (wa-api)
     msgsend.ns        -> bangun_pesan_*/ekstrak_budy/ekstrak_kutipan (protobuf message builder+parser)
     media.ns          -> upload/download media terenkripsi
@@ -87,7 +87,7 @@ Reply/quote: kebanyakan punya varian `...Kutip` yang otomatis ngutip pesan yang 
 
 ## Tipe pesan WhatsApp yang udah dikenal
 
-`PB.pb_dekode_bernama(wire)` decode protobuf `Message` pake skema di `nusantara_modules/hypermeow-ns/proto/pb.ns:_pb_skema()` — **916 message type + 283 enum, dari SEMUA 55 file `.proto` whatsmeow** (waE2E, waCommon,  waArmadillo*/Instamadillo*/waCert/dll), termasuk resolusi referensi silang ANTAR file (mis. `ContextInfo` yang punya field nunjuk ke tipe di `waAICommon`, `waAea`, `waServerSync`, dst — bukan cuma yang satu file). Tipe dari `waE2E`/`waCommon` namanya polos tanpa prefix (`"Message"`, `"ImageMessage"`) demi backward-compat; tipe dari 53 file lain di-prefix nama direktori proto-nya, mis. `waAdv_ADVDeviceIdentity`, `waCert_NoiseCertificate`. Field yang **masih belum** ada di skema (proto baru yang belum dirilis whatsmeow, dll) otomatis fallback ke tag angka mentah. Generator-nya ada di `~/.claude/jobs/8963a5e0/tmp/gen_pb_schema.py` kalau perlu generate ulang pas whatsmeow update field baru. Buat decode skema SELAIN `"Message"`, panggil `_pb_dekode_bernama_inner(data, "NamaSkema", _pb_skema())` langsung (`pb_dekode_bernama` publiknya di-hardcode ke `"Message"`). Cara cari field number manual (kalau proto whatsmeow-nya sendiri belum sempet di-generate-ulang): buka source Go/whatsmeow yang ada di `/home/nopal/Documents/golang_botwa/whatsmeow/proto/`, grep `protobuf:"bytes,<N>,opt,name=<namaField>"`.
+`PB.pb_dekode_bernama(wire)` decode protobuf `Message` pake skema di `nusantara_modules/UwUchan/proto/pb.ns:_pb_skema()` — **916 message type + 283 enum, dari SEMUA 55 file `.proto` whatsmeow** (waE2E, waCommon,  waArmadillo*/Instamadillo*/waCert/dll), termasuk resolusi referensi silang ANTAR file (mis. `ContextInfo` yang punya field nunjuk ke tipe di `waAICommon`, `waAea`, `waServerSync`, dst — bukan cuma yang satu file). Tipe dari `waE2E`/`waCommon` namanya polos tanpa prefix (`"Message"`, `"ImageMessage"`) demi backward-compat; tipe dari 53 file lain di-prefix nama direktori proto-nya, mis. `waAdv_ADVDeviceIdentity`, `waCert_NoiseCertificate`. Field yang **masih belum** ada di skema (proto baru yang belum dirilis whatsmeow, dll) otomatis fallback ke tag angka mentah. Generator-nya ada di `~/.claude/jobs/8963a5e0/tmp/gen_pb_schema.py` kalau perlu generate ulang pas whatsmeow update field baru. Buat decode skema SELAIN `"Message"`, panggil `_pb_dekode_bernama_inner(data, "NamaSkema", _pb_skema())` langsung (`pb_dekode_bernama` publiknya di-hardcode ke `"Message"`). Cara cari field number manual (kalau proto whatsmeow-nya sendiri belum sempet di-generate-ulang): buka source Go/whatsmeow yang ada di `/home/nopal/Documents/golang_botwa/whatsmeow/proto/`, grep `protobuf:"bytes,<N>,opt,name=<namaField>"`.
 
 Field boolean pakai `_fldb(nama)`, enum pakai `_flde(nama, peta_enum)` (angka->nama, otomatis bisa di-encode balik lewat `.sendraw`), bytes yang mestinya tampil base64 (signature/secret/certificate) pakai `_fldbin(nama)`, submessage pakai `_flds(nama, "NamaSkemaLain")`.
 
@@ -121,7 +121,7 @@ Kalau nambah field baru di raw protobuf builder (`bangun_pesan_gambar` dkk di `m
    nusa -c bot/bot.ns
    grep -oE "^fungsi [a-zA-Z_0-9]+" <file yang diedit> | sort | uniq -d   # pastikan gak ada fungsi dobel
    ```
-   Kalau ngedit file di `nusantara_modules/hypermeow-ns/`, copy juga ke mirror `~/hypermeow-ns/` dan `~/.local/bin/nusantara-plugins/` — interpreter load dari sana, bukan cuma dari repo ini.
+   Kalau ngedit file di `nusantara_modules/UwUchan/`, copy juga ke mirror `~/UwUchan/` dan `~/.local/bin/nusantara-plugins/` — interpreter load dari sana, bukan cuma dari repo ini.
 
 4. Deploy: `pm2 restart ndlabs-bot`, tunggu ~8-10 detik, cek `pm2 jlist` (status/mem/restart count) dan `grep -i FATAL ~/.pm2/logs/ndlabs-bot-error.log`.
 
@@ -151,8 +151,8 @@ Ini bagian paling gampang bikin bot freeze TOTAL (semua grup, semua chat, bukan 
 ```
 nusa -c <file yang diedit>
 grep -oE "^fungsi [a-zA-Z_0-9]+" <file> | sort | uniq -d
-# kalau file di nusantara_modules/hypermeow-ns/:
-cp <file> ~/hypermeow-ns/<file>
+# kalau file di nusantara_modules/UwUchan/:
+cp <file> ~/UwUchan/<file>
 cp <file> ~/.local/bin/nusantara-plugins/<file>
 pm2 restart ndlabs-bot
 sleep 10

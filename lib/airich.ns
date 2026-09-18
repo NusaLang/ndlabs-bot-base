@@ -1,4 +1,4 @@
-buat PB = impor("../nusantara_modules/hypermeow-ns/proto/pb.ns");
+buat PB = impor("../nusantara_modules/UwUchan/proto/pb.ns");
 buat CP = muat_plugin("crypto");
 
 buat _SIG_PREFIX = "NIXEL.MessageBuilderV4.7-VerificationSignature.Metadata";

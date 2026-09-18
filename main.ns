@@ -1,7 +1,7 @@
 
 buat BOT_PKG = impor("bot/bot.ns");
 buat RUNTIME = impor("bot/runtime.ns");
-buat ST      = impor("hypermeow-ns/store/session.ns");
+buat ST      = impor("UwUchan/store/session.ns");
 buat DB      = impor("database/db.ns");
 buat ARSIP   = impor("database/arsip.ns");
 buat UTILS   = impor("lib/utils.ns");

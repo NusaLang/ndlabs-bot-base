@@ -1,5 +1,5 @@
 
-buat JID = impor("../nusantara_modules/hypermeow-ns/types/jid.ns");
+buat JID = impor("../nusantara_modules/UwUchan/types/jid.ns");
 buat DB  = impor("../database/db.ns");
 
 buat BOT_NUM   = ambil_env("BOT_NUMBER", "");

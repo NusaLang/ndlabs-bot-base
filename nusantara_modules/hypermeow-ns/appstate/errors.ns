@@ -1,7 +1,0 @@
-
-buat ERR_MISSING_PREVIOUS_SET_VALUE_OPERATION = "missing value MAC of previous SET operation";
-buat ERR_MISMATCHING_LTHASH = "mismatching LTHash";
-buat ERR_MISMATCHING_PATCH_MAC = "mismatching patch MAC";
-buat ERR_MISMATCHING_CONTENT_MAC = "mismatching content MAC";
-buat ERR_MISMATCHING_INDEX_MAC = "mismatching index MAC";
-buat ERR_KEY_NOT_FOUND = "didn't find app state key";

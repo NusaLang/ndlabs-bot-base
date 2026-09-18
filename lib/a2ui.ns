@@ -2,7 +2,7 @@
 // ala Meta (Column/Text/Image/Card dst, lihat https://a2ui.org/), BUKAN
 // trik HTML-embed kayak lib/airich.ns. Dirender langsung sama klien WA,
 // jadi gak kena batasan sandbox WebView (fetch/gambar diblokir dll).
-buat MS = impor("../nusantara_modules/hypermeow-ns/msgsend.ns");
+buat MS = impor("../nusantara_modules/UwUchan/msgsend.ns");
 buat CP = muat_plugin("crypto");
 
 fungsi _secret_acak() {
